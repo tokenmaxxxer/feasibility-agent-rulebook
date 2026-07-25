@@ -240,16 +240,21 @@ def field(text_block, name):
 new_status = field(block, "status")
 if not new_status:
     deny("RULES COULD NOT BE LOADED: proposed frontmatter has no (single, non-empty) 'status' field.")
-new_status = new_status.lower()
+new_status = new_status.strip().rstrip("\r").strip().lower()
 
 known_states = {r[0].lower() for r in rows} | {r[1].lower() for r in rows}
 known_states.discard("(none)")
 if new_status not in known_states:
     deny("RULES COULD NOT BE LOADED: status '%s' is not one of the states in transition-rules.md (%s)." % (new_status, ", ".join(sorted(known_states))))
 
-# Determine current on-disk status.
-old_status = "(none)"
-if os.path.exists(record_abs):
+# Determine current on-disk status. "No state file" is derived from file
+# existence alone, as a boolean, and NEVER by comparing a parsed status
+# value against the "(none)" string. Only a genuinely absent file yields the
+# synthetic "(none)" old status used for bootstrap-row matching.
+file_exists = os.path.exists(record_abs)
+if not file_exists:
+    old_status = "(none)"
+else:
     try:
         with open(record_abs, encoding="utf-8-sig") as fh:
             old_text = fh.read(1 << 20)
@@ -263,7 +268,23 @@ if os.path.exists(record_abs):
     old_status = field(old_text[3:oend], "status")
     if not old_status:
         deny("RULES COULD NOT BE LOADED: existing feasibility-record.md status field is missing, duplicated, or empty; refusing to layer a new state on top of an unknown state.")
-    old_status = old_status.lower()
+    # Strip trailing whitespace/CRLF before the membership check; a value
+    # that is only whitespace after stripping counts as empty.
+    old_status = old_status.strip().rstrip("\r").strip().lower()
+    if not old_status:
+        deny("RULES COULD NOT BE LOADED: existing feasibility-record.md status field is empty (whitespace only); refusing to layer a new state on top of an unknown state.")
+    # An EXISTING state file's value must be a member of the known-state
+    # set. "(none)" as a value, or any value outside the set, is the same
+    # broken-input case as missing/empty/unparseable -- never treated as if
+    # the file were absent, and never routed to the "not in the table"
+    # denial (the table is not what failed here).
+    if old_status not in known_states:
+        deny(
+            "RULES COULD NOT BE LOADED: existing feasibility-record.md status "
+            "'%s' is not one of the states in transition-rules.md (%s); "
+            "refusing to layer a new state on top of an unrecognized state."
+            % (old_status, ", ".join(sorted(known_states)))
+        )
 
 if (old_status, new_status) not in legal:
     deny(
