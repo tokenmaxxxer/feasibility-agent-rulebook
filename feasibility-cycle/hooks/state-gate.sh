@@ -243,12 +243,12 @@ if not new_status:
 new_status = new_status.lower()
 
 known_states = {r[0].lower() for r in rows} | {r[1].lower() for r in rows}
-known_states.discard("none")
+known_states.discard("(none)")
 if new_status not in known_states:
     deny("RULES COULD NOT BE LOADED: status '%s' is not one of the states in transition-rules.md (%s)." % (new_status, ", ".join(sorted(known_states))))
 
 # Determine current on-disk status.
-old_status = "none"
+old_status = "(none)"
 if os.path.exists(record_abs):
     try:
         with open(record_abs, encoding="utf-8-sig") as fh:

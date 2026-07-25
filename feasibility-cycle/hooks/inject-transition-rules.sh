@@ -107,7 +107,7 @@ if os.path.isfile(record_file):
                 else:
                     status = matches[0].strip().lower()
 else:
-    status = "none"  # no record file yet: legal starting states apply
+    status = "(none)"  # no record file yet: legal starting states apply
 
 print("feasibility-cycle: state-machine context")
 print("=========================================")
