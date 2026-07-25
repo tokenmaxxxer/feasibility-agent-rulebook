@@ -123,6 +123,46 @@ new_work
 code="$(run_gate '{not valid json')"
 check "(f) malformed hook JSON -> deny with visible message" deny "$code"
 
+# (g) existing state file with value "(none)" -> DENIED with "rules could
+# not be loaded" (the hunter's exact reproduction)
+new_work
+seed_record $'---\nstatus: (none)\n---\nbody\n'
+payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_gate "$payload")"
+check "(g) existing status '(none)' -> deny (rules could not be loaded)" deny "$code"
+grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (g) message did not mention rules could not be loaded"; fail=$((fail+1)); }
+
+# (h) existing state file with an empty status value -> DENIED likewise
+new_work
+seed_record $'---\nstatus:\n---\nbody\n'
+payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_gate "$payload")"
+check "(h) existing status empty -> deny (rules could not be loaded)" deny "$code"
+grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (h) message did not mention rules could not be loaded"; fail=$((fail+1)); }
+
+# (i) existing state file with a value not in the known-state set -> DENIED
+new_work
+seed_record $'---\nstatus: not-a-real-state\n---\nbody\n'
+payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_gate "$payload")"
+check "(i) existing status out-of-set -> deny (rules could not be loaded)" deny "$code"
+grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (i) message did not mention rules could not be loaded"; fail=$((fail+1)); }
+
+# (j) existing state file with a valid value followed by trailing
+# whitespace/CRLF -> treated as that valid state, not as broken
+new_work
+seed_record $'---\r\nstatus: scoped   \r\n---\r\nbody\r\n'
+payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: probing\n---\nbody\n')"
+code="$(run_gate "$payload")"
+check "(j) existing status 'scoped' with trailing ws/CRLF -> allow (scoped -> probing)" allow "$code"
+
+# (k) state file genuinely absent -> the (none) -> X bootstrap row is still
+# ALLOWED (regression guard)
+new_work
+payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_gate "$payload")"
+check "(k) genuinely absent state file -> (none) -> idle bootstrap -> allow" allow "$code"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

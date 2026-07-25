@@ -78,7 +78,11 @@ if rules_text is not None:
             )
 
 # --- load current state --------------------------------------------------
+# "No state file" is derived from file existence alone, as a boolean, and
+# NEVER by comparing a parsed status value against the "(none)" string.
 status = None
+known_states = {r[0].lower() for r in rows} | {r[1].lower() for r in rows}
+known_states.discard("(none)")
 if os.path.isfile(record_file):
     try:
         with open(record_file, encoding="utf-8-sig") as fh:
@@ -102,10 +106,22 @@ if os.path.isfile(record_file):
                     problems.append(
                         "feasibility-record.md frontmatter has a duplicated 'status' field."
                     )
-                elif not matches[0].strip():
-                    problems.append("feasibility-record.md 'status' field is present but empty.")
                 else:
-                    status = matches[0].strip().lower()
+                    candidate = matches[0].strip().rstrip("\r").strip().lower()
+                    if not candidate:
+                        problems.append("feasibility-record.md 'status' field is present but empty.")
+                    elif rows and candidate not in known_states:
+                        # "(none)" as an on-disk value, or any value outside
+                        # the known-state set, is a broken input exactly like
+                        # missing/empty/unparseable -- never rendered as if it
+                        # were the legitimate current state.
+                        problems.append(
+                            "feasibility-record.md 'status' field is '%s', which is not "
+                            "one of the states in transition-rules.md (%s)."
+                            % (candidate, ", ".join(sorted(known_states)))
+                        )
+                    else:
+                        status = candidate
 else:
     status = "(none)"  # no record file yet: legal starting states apply
 
