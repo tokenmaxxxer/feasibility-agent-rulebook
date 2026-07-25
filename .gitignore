@@ -1,0 +1,6 @@
+# Sandbox runtime state for a project this plugin is installed into. Local
+# to a working copy; never committed here (this repository IS the plugin,
+# not a sandbox it runs in), but ignored defensively in case a test sandbox
+# is ever created inside a checkout of this repository itself.
+.feasibility/
+feasibility-record.md
