@@ -42,7 +42,7 @@ payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || deny "no tool-input payload was received."
 
 FEASIBILITY_PAYLOAD="$payload" FEASIBILITY_ROOT="$root" python3 <<'PY'
-import json, os, posixpath, re, sys
+import json, os, posixpath, re, shlex, sys
 
 def deny(msg):
     print("feasibility-cycle: DENIED - %s" % msg, file=sys.stderr)
@@ -80,22 +80,84 @@ if tool == "Bash":
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
         deny("Bash tool_input.command missing or empty.")
-    # Does this command's text reference the record file at all, via a
-    # write-shaped construct (redirect, tee, in-place sed/perl/ruby, cp, mv)?
-    write_shapes = re.compile(
-        r'>>?\s*[^|&;]*\bfeasibility-record\.md\b'
-        r'|\btee\b[^|;]*\bfeasibility-record\.md\b'
-        r'|\b(sed|perl|ruby)\b[^|;]*-i[a-zA-Z0-9]*\b[^|;]*\bfeasibility-record\.md\b'
-        r'|\b(cp|mv)\b[^|;]*\bfeasibility-record\.md\b',
+
+    # Rule: decide from the RESOLVED TARGET PATH, never from a literal
+    # filename appearing in the command text. First ask whether the target
+    # of any write-shaped construct in this command is even statically
+    # determinable; if it is not, fail closed regardless of what filename
+    # (if any) appears literally in the text.
+
+    # Any construct that makes a write target (or the command itself)
+    # impossible to resolve without executing a shell: variable expansion,
+    # command/process substitution, indirection, globbing, tilde expansion,
+    # eval, or a heredoc/here-string body.
+    dynamic_construct = re.compile(
+        r'\$\{?\w|\$\(|`|\*|\?|~|\beval\b|\bsource\b|\.\s+/|<\(|>\(|<<'
+    )
+
+    # Constructs that could write to a file at all: redirects, tee, cp/mv,
+    # in-place sed/perl/ruby, dd, install.
+    write_shape = re.compile(
+        r'>>?(?!\()'
+        r'|\btee\b'
+        r'|\b(cp|mv|dd|install)\b'
+        r'|\b(sed|perl|ruby)\b[^|;\n]*-i[a-zA-Z0-9]*\b',
         re.I,
     )
-    if write_shapes.search(command):
+
+    could_write = write_shape.search(command) is not None
+    is_dynamic = dynamic_construct.search(command) is not None
+
+    if could_write and is_dynamic:
         deny(
-            "a Bash command targets feasibility-record.md with a write-shaped "
-            "construct (redirect/tee/in-place edit/cp/mv). This gate cannot read "
-            "the resulting content before the command runs, so it refuses the "
-            "write outright. Use the Write or Edit tool on this file instead."
+            "a Bash command could write a file and its write target is not "
+            "statically determinable (shell variable, command/process "
+            "substitution, indirection, glob, eval, source, or heredoc into a "
+            "computed name). Failing closed: this could target "
+            "feasibility-record.md and this gate cannot prove otherwise. Use "
+            "the Write tool on a literal path instead."
         )
+
+    if could_write:
+        # No dynamism detected anywhere in the command text, so any write
+        # target named in it is a plain literal. Resolve every path-shaped
+        # literal token against the project root and compare to the state
+        # file's realpath.
+        try:
+            tokens = shlex.split(command, comments=False)
+        except ValueError:
+            deny(
+                "a Bash command could write a file but its argument text "
+                "could not be parsed (unbalanced quoting); failing closed on "
+                "feasibility-record.md."
+            )
+        candidates = []
+        for tok in tokens:
+            t = tok
+            for op in (">>", ">"):
+                if t.startswith(op):
+                    t = t[len(op):]
+            if t.startswith("-"):
+                continue
+            if "/" in t or t.endswith(".md") or t == record_name:
+                candidates.append(t)
+        for cand in candidates:
+            normalized = cand.replace("\\", "/")
+            absolute = posixpath.normpath(
+                normalized if posixpath.isabs(normalized) else posixpath.join(root, normalized)
+            )
+            try:
+                resolved = posixpath.normpath(os.path.realpath(absolute).replace("\\", "/"))
+            except OSError:
+                resolved = absolute
+            if resolved == record_abs:
+                deny(
+                    "a Bash command targets feasibility-record.md (resolved "
+                    "path match) with a write-shaped construct (redirect/tee/"
+                    "cp/mv/in-place edit/dd/install). This gate cannot read the "
+                    "resulting content before the command runs, so it refuses "
+                    "the write outright. Use the Write tool on this file instead."
+                )
     allow()
 
 if tool in ("Write", "Edit", "NotebookEdit"):
