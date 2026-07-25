@@ -40,13 +40,29 @@ deny() {
 
 command -v python3 >/dev/null 2>&1 || deny "RULES COULD NOT BE LOADED: python3 is required to evaluate this gate and was not found."
 
-root="${CLAUDE_PROJECT_DIR:-}"
-[ -n "$root" ] || root="$(pwd)"
-root="$(cd "$root" 2>/dev/null && pwd -P)" || deny "RULES COULD NOT BE LOADED: could not resolve the project root."
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# The state file's path is anchored to the repository root, found by walking
+# UP from this hook script's own on-disk location to the nearest enclosing
+# `.git`. The process working directory (CLAUDE_PROJECT_DIR/$PWD) is never
+# consulted for this: a cwd outside the repo must not cause the state file
+# to be resolved anywhere but inside this repo.
+root=""
+dir="$script_dir"
+while [ -n "$dir" ]; do
+  if [ -e "$dir/.git" ]; then
+    root="$dir"
+    break
+  fi
+  parent="$(dirname "$dir")"
+  [ "$parent" = "$dir" ] && break
+  dir="$parent"
+done
+[ -n "$root" ] || deny "RULES COULD NOT BE LOADED: could not find an enclosing .git directory to anchor the project root (walked up from $script_dir)."
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$plugin_root" ]; then
-  plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+  plugin_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"
 fi
 rules_file="$plugin_root/hooks/transition-rules.md"
 
@@ -80,6 +96,13 @@ if not isinstance(tool_input, dict):
 root = os.environ["FEASIBILITY_ROOT"]
 record_name = "feasibility-record.md"
 record_abs = posixpath.normpath(posixpath.join(root, record_name))
+
+# Single source of truth for which tools this gate recognizes as capable of
+# writing feasibility-record.md — used by both the "does this reach the
+# state file" dispatch and the final dispatch fallback, so the two cannot
+# drift apart the way Edit/MultiEdit did. A tool name outside this set that
+# nonetheless reaches this script is a DENY, not a pass-through allow.
+RECOGNIZED_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
 # --- question 1: does this write reach the state file? -------------------
 target_path = None
@@ -159,7 +182,7 @@ if tool == "Bash":
                 )
     allow()  # does not reach the state file: allowed without comment
 
-if tool in ("Write", "Edit", "NotebookEdit"):
+if tool in RECOGNIZED_WRITE_TOOLS:
     path = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(path, str) or not path:
         deny("RULES COULD NOT BE LOADED: %s tool_input carries no file_path." % tool)
@@ -179,13 +202,20 @@ if tool in ("Write", "Edit", "NotebookEdit"):
         new_content = content
     else:
         deny(
-            "an Edit/NotebookEdit call targets feasibility-record.md. This gate "
+            "an Edit/MultiEdit/NotebookEdit call targets feasibility-record.md. This gate "
             "only evaluates complete, readable content (a Write call); partial "
             "edits to the state file are refused so a transition can never be "
             "assembled from an unreadable diff. Rewrite the whole file with Write."
         )
 else:
-    allow()  # tool this gate does not recognize touches nothing it governs
+    # Bash already returned above (via allow() or deny()); anything else
+    # reaching here is a tool name outside RECOGNIZED_WRITE_TOOLS.
+    deny(
+        "an unrecognized tool (%r) reached this gate. This gate's recognized-write-tool "
+        "list is %r (plus Bash, handled separately); a tool name outside that set is "
+        "treated as a denial, not a pass — unknown input fails closed rather than being "
+        "assumed to be a read." % (tool, RECOGNIZED_WRITE_TOOLS)
+    )
 
 if target_path is None or new_content is None:
     deny("RULES COULD NOT BE LOADED: internal — no content resolved for a call this gate should have judged.")
