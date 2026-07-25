@@ -163,6 +163,30 @@ payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbo
 code="$(run_gate "$payload")"
 check "(k) genuinely absent state file -> (none) -> idle bootstrap -> allow" allow "$code"
 
+# (l) invoked from a cwd OUTSIDE the repo, CLAUDE_PROJECT_DIR unset -------
+# Root resolution must be anchored to the hook's own on-disk location, never
+# to the process cwd or CLAUDE_PROJECT_DIR. Run the SAME payload against the
+# real on-disk gate once from inside this repo's own checkout and once from
+# an unrelated outside directory, both with CLAUDE_PROJECT_DIR unset — the
+# two must reach the identical decision, proving the outside-cwd invocation
+# still resolved and judged this repo's own feasibility-record.md rather
+# than some other (or no) state file.
+repo_root="$(cd "$script_dir/../.." && pwd -P)"
+outside_dir="$(mktemp -d)"
+payload_l='{"tool_name":"Write","tool_input":{"file_path":"feasibility-record.md","content":"---\nstatus: idle\n---\nbody\n"}}'
+out_in="$(cd "$repo_root" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_l" "$gate" 2>&1)"
+code_in=$?
+out_out="$(cd "$outside_dir" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_l" "$gate" 2>&1)"
+code_out=$?
+rm -rf "$outside_dir"
+if [ "$code_in" -eq "$code_out" ]; then
+  echo "PASS: (l) invocation from outside the repo resolves the same repo root as invocation from inside it (exit $code_out matches exit $code_in)"
+  pass=$((pass+1))
+else
+  echo "FAIL: (l) invocation from outside the repo (exit $code_out) diverged from invocation from inside it (exit $code_in) — outside: $out_out | inside: $out_in"
+  fail=$((fail+1))
+fi
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

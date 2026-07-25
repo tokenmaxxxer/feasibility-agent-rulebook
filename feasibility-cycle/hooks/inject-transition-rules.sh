@@ -12,14 +12,35 @@
 # 0), but it never exits with empty stdout.
 set -uo pipefail
 
-root="${CLAUDE_PROJECT_DIR:-}"
-[ -n "$root" ] || root="$(pwd)"
-resolved_root="$(cd "$root" 2>/dev/null && pwd -P)"
-[ -n "$resolved_root" ] && root="$resolved_root"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
+
+# Root is discovered by walking UP from the hook's own on-disk location to
+# the nearest enclosing `.git`, never from the process cwd or
+# CLAUDE_PROJECT_DIR — this must resolve to the same state file that
+# state-gate.sh guards, regardless of invoking cwd.
+root=""
+dir="$script_dir"
+while :; do
+  if [ -e "$dir/.git" ]; then
+    root="$dir"
+    break
+  fi
+  parent="$(dirname "$dir")"
+  [ "$parent" = "$dir" ] && break
+  dir="$parent"
+done
+if [ -z "$root" ]; then
+  echo "feasibility-cycle: state-machine context"
+  echo "========================================="
+  echo "TRANSITION RULES COULD NOT BE LOADED."
+  echo "  - no enclosing .git found by walking up from this hook's own directory ($script_dir)."
+  echo "No transition of feasibility-record.md's status may be made until this is fixed."
+  exit 0
+fi
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$plugin_root" ]; then
-  plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+  plugin_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"
 fi
 rules_file="$plugin_root/hooks/transition-rules.md"
 record_file="$root/feasibility-record.md"
