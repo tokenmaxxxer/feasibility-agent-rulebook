@@ -60,6 +60,50 @@ while [ -n "$dir" ]; do
 done
 [ -n "$root" ] || deny "RULES COULD NOT BE LOADED: could not find an enclosing .git directory to anchor the project root (walked up from $script_dir)."
 
+# --- contract SHA pin ------------------------------------------------------
+# This repo's "Handoff protocol" section in README.md is an excerpt of
+# docs/specs/role-handoff-contract.md, pinned at a specific SHA. Applying the
+# contract's own staleness rule (contract section 4) to the contract itself:
+# if the contract has moved since the excerpt was taken, this gate refuses
+# to proceed until the excerpt is re-taken and the pin updated.
+contract_rel="docs/specs/role-handoff-contract.md"
+contract_pinned_sha="2affe5db7dfb285abaa2860d3004edb3f97c9aec"
+
+contract_repo_root=""
+dir="$root"
+while [ -n "$dir" ]; do
+  parent="$(dirname "$dir")"
+  [ "$parent" = "$dir" ] && break
+  if [ -f "$parent/$contract_rel" ]; then
+    contract_repo_root="$parent"
+    break
+  fi
+  dir="$parent"
+done
+
+[ -n "$contract_repo_root" ] || deny "RULES COULD NOT BE LOADED: could not locate $contract_rel by walking up from $root to check the pinned contract SHA (2affe5db7dfb285abaa2860d3004edb3f97c9aec) that README.md's Handoff protocol section was excerpted from."
+
+contract_git_root=""
+d="$contract_repo_root"
+while [ -n "$d" ]; do
+  if [ -e "$d/.git" ]; then
+    contract_git_root="$d"
+    break
+  fi
+  p="$(dirname "$d")"
+  [ "$p" = "$d" ] && break
+  d="$p"
+done
+
+[ -n "$contract_git_root" ] || deny "RULES COULD NOT BE LOADED: found $contract_rel at $contract_repo_root but no enclosing .git to read its current commit SHA from."
+
+contract_current_sha="$(git -C "$contract_git_root" log -1 --format=%H -- "$contract_rel" 2>/dev/null || true)"
+[ -n "$contract_current_sha" ] || deny "RULES COULD NOT BE LOADED: could not determine the current commit SHA of $contract_rel in $contract_git_root."
+
+if [ "$contract_current_sha" != "$contract_pinned_sha" ]; then
+  deny "docs/specs/role-handoff-contract.md has changed since README.md's Handoff protocol section was excerpted (pinned $contract_pinned_sha, now $contract_current_sha). Re-excerpt the Handoff protocol section against the current contract and update the pin before proceeding."
+fi
+
 plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
 if [ -z "$plugin_root" ]; then
   plugin_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"

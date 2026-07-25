@@ -32,6 +32,57 @@ approval token minted from the user's own conversational turn — resolved
 probe fields alone are not consent. Full detail:
 `docs/specs/state-machine.md`.
 
+## Handoff protocol
+
+Excerpt of `docs/specs/role-handoff-contract.md` (root `tokenmaxxxer` repo)
+at `2affe5db7dfb285abaa2860d3004edb3f97c9aec` — feasibility's rows only.
+`feasibility-cycle/hooks/state-gate.sh` refuses to proceed when this pinned
+SHA no longer matches the contract's current SHA at that path.
+
+**ACCEPTS**: `hypothesis` — the spec to assess. The market argument that
+motivated it is withheld regardless of what the input artifact actually
+contains; this role's own "given to start" rule (above) overrides whatever
+the upstream artifact carries. Refuses `build-proposal`, `qa-state`,
+`review-record`, `ops-state` — none of these are within this role's accept
+set.
+
+**WHERE UPSTREAM LIVES**: `docs/proposals/<date>-<slug>.md`, `kind:
+hypothesis`. Given only a pointer ("it's here"), this is the path shape to
+resolve it against.
+
+**PRODUCES**:
+
+- `feasibility-record` at `docs/reports/records/<subject>/feasibility.md`.
+  Required fields beyond the common header (`kind`, `subject`,
+  `produced_by`, `upstream`, `handoff_status: provisional | final`): role
+  status (`idle,scoped,probing,verdict`), `market_argument_supplied: false`,
+  `technical`/`prior_art`/`legal_regulatory`/`threat_model` (each
+  `unresolved | pass:<evidence> | fail:<evidence> | blocked:<evidence>`),
+  `verdict: go | no-go | conditional` (required once role status reaches
+  `verdict`), `measurement_design: <description or pointer>` (required
+  alongside `verdict`).
+- `spike-report` at
+  `docs/reports/records/<subject>/spikes/<spike-slug>.md`. Required fields
+  beyond the common header: Spike Title, Description/Goal, Type, Timebox,
+  Acceptance Criteria, Tasks, Outcomes, Recommendation, Open questions,
+  Reversibility tag.
+
+**STOPS**:
+
+- Upstream stale at role entry: the `hypothesis` path's recorded `sha` in
+  this record's `upstream` entry no longer matches that path's current
+  commit SHA. Stop before doing further work and ask the user whether to
+  proceed on the recorded version or re-confirm against the current one.
+- A `feasibility-record` or `spike-report` already exists at a path this
+  role owns but this role did not write it, or a record already exists at a
+  path this role does not own under `docs/reports/records/<subject>/`.
+  Refuse to write, report the conflict (the path, and whose territory it
+  falls in) — never overwrite or merge into it silently.
+- Input carries `handoff_status: provisional`. This role may read it to
+  plan or draft against but must not treat it as final input to an
+  accept/refuse decision, nor record it as the baseline for the staleness
+  check, until `handoff_status` reads `final`.
+
 ## Install
 
 ```
