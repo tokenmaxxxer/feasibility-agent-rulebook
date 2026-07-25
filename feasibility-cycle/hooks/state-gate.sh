@@ -265,9 +265,6 @@ if os.path.exists(record_abs):
         deny("RULES COULD NOT BE LOADED: existing feasibility-record.md status field is missing, duplicated, or empty; refusing to layer a new state on top of an unknown state.")
     old_status = old_status.lower()
 
-if old_status == new_status:
-    allow()  # rewriting fields within the same state is not a transition
-
 if (old_status, new_status) not in legal:
     deny(
         "transition '%s -> %s' is not present as a row in transition-rules.md."
