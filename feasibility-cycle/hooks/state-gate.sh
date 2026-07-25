@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Write|Edit|NotebookEdit|Bash): enforces the feasibility
-# role's state machine against `feasibility-record.md` at the project root,
-# using `transition-rules.md` as the single source of legal transitions.
+# role's state machine against its two v2-contract-owned per-subject record
+# paths (docs/reports/records/<subject>/feasibility.md and
+# .../spikes/<spike-slug>.md), using `transition-rules.md` as the single
+# source of legal transitions. This gate only ever fires on write-shaped
+# tool calls (Write|Edit|NotebookEdit|Bash, per this hook's own
+# registration) — reads are unconditionally allowed per contract section 4
+# ("READ is unconditionally broad"), and this file contains no read-path
+# logic to relax.
 #
 # The gate answers exactly two questions:
 #   1. Does this write reach the state file, judged by RESOLVED TARGET PATH
@@ -106,8 +112,25 @@ if not isinstance(tool_input, dict):
     deny("RULES COULD NOT BE LOADED: tool_input missing or malformed in payload.")
 
 root = os.environ["FEASIBILITY_ROOT"]
-record_name = "feasibility-record.md"
-record_abs = posixpath.normpath(posixpath.join(root, record_name))
+
+# v2 blackboard contract (docs/specs/role-handoff-contract.md, section 11):
+# feasibility no longer owns one project-root file. It owns two per-subject
+# path shapes under docs/reports/records/<subject>/. record_name/record_abs
+# (a single hardcoded root-level filename) is replaced by a path-shape
+# match; everything downstream that used to compare against record_abs now
+# calls is_owned_path(resolved) instead.
+OWNED_PATH_RE = re.compile(
+    r"^docs/reports/records/[^/]+/(feasibility\.md|spikes/[^/]+\.md)$"
+)
+
+
+def is_owned_path(resolved_abs):
+    try:
+        rel = posixpath.relpath(resolved_abs, root)
+    except ValueError:
+        return False
+    rel = rel.replace("\\", "/")
+    return bool(OWNED_PATH_RE.match(rel))
 
 # Single source of truth for which tools this gate recognizes as capable of
 # writing feasibility-record.md — used by both the "does this reach the
@@ -173,7 +196,7 @@ if tool == "Bash":
                     t = t[len(op):]
             if t.startswith("-"):
                 continue
-            if "/" in t or t.endswith(".md") or t == record_name:
+            if "/" in t or t.endswith(".md"):
                 candidates.append(t)
         for cand in candidates:
             normalized = cand.replace("\\", "/")
@@ -184,13 +207,15 @@ if tool == "Bash":
                 resolved = posixpath.normpath(os.path.realpath(absolute).replace("\\", "/"))
             except OSError:
                 resolved = absolute
-            if resolved == record_abs:
+            if is_owned_path(resolved):
                 deny(
-                    "a Bash command targets feasibility-record.md (resolved "
-                    "path match) with a write-shaped construct (redirect/tee/"
-                    "cp/mv/in-place edit/dd/install). This gate cannot read the "
-                    "resulting content before the command runs, so it refuses "
-                    "the write outright. Use the Write tool on this file instead."
+                    "a Bash command targets a feasibility-owned record path "
+                    "(docs/reports/records/<subject>/feasibility.md or "
+                    ".../spikes/<spike-slug>.md) with a write-shaped construct "
+                    "(redirect/tee/cp/mv/in-place edit/dd/install). This gate "
+                    "cannot read the resulting content before the command "
+                    "runs, so it refuses the write outright. Use the Write "
+                    "tool on this file instead."
                 )
     allow()  # does not reach the state file: allowed without comment
 
@@ -203,21 +228,22 @@ if tool in RECOGNIZED_WRITE_TOOLS:
         normalized if posixpath.isabs(normalized) else posixpath.join(root, normalized)
     )
     resolved = posixpath.normpath(os.path.realpath(absolute).replace("\\", "/"))
-    if resolved != record_abs:
-        allow()  # not the state file; nothing to gate
+    if not is_owned_path(resolved):
+        allow()  # not a feasibility-owned record path; nothing to gate
     target_path = resolved
 
     if tool == "Write":
         content = tool_input.get("content")
         if not isinstance(content, str):
-            deny("RULES COULD NOT BE LOADED: Write tool_input carries no readable content for feasibility-record.md.")
+            deny("RULES COULD NOT BE LOADED: Write tool_input carries no readable content for the feasibility record.")
         new_content = content
     else:
         deny(
-            "an Edit/MultiEdit/NotebookEdit call targets feasibility-record.md. This gate "
-            "only evaluates complete, readable content (a Write call); partial "
-            "edits to the state file are refused so a transition can never be "
-            "assembled from an unreadable diff. Rewrite the whole file with Write."
+            "an Edit/MultiEdit/NotebookEdit call targets a feasibility-owned record "
+            "path. This gate only evaluates complete, readable content (a Write "
+            "call); partial edits to the record are refused so a transition can "
+            "never be assembled from an unreadable diff. Rewrite the whole file "
+            "with Write."
         )
 else:
     # Bash already returned above (via allow() or deny()); anything else
