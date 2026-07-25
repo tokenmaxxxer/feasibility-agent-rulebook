@@ -275,7 +275,12 @@ if (old_status, new_status) not in legal:
     )
 
 # --- content precondition preserved for the one content-checked row ------
-if old_status == "probing" and new_status == "verdict":
+# Gated at probing -> verdict-provisional (not probing -> verdict): the
+# four-probe-content requirement moved to the new intermediate state per
+# the revised state set (verdict-provisional is the draft disposition;
+# verdict is reserved for after an explicit user accept, which carries no
+# content precondition of its own beyond the actor:user judgment call).
+if old_status == "probing" and new_status == "verdict-provisional":
     probe_names = ("technical", "prior_art", "legal_regulatory", "threat_model")
     unresolved = []
     for n in probe_names:
@@ -288,7 +293,7 @@ if old_status == "probing" and new_status == "verdict":
             unresolved.append(n)
     if unresolved:
         deny(
-            "probing -> verdict refused: probe field(s) not resolved: %s. "
+            "probing -> verdict-provisional refused: probe field(s) not resolved: %s. "
             "Each of technical/prior_art/legal_regulatory/threat_model must be "
             "'pass: ...', 'fail: ...', or 'blocked: ...' (precondition from "
             "transition-rules.md)." % ", ".join(unresolved)
