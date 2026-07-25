@@ -34,10 +34,11 @@ probe fields alone are not consent. Full detail:
 
 ## Handoff protocol
 
-Excerpt of `docs/specs/role-handoff-contract.md` (root `tokenmaxxxer` repo)
-at `2affe5db7dfb285abaa2860d3004edb3f97c9aec` — feasibility's rows only.
-`feasibility-cycle/hooks/state-gate.sh` refuses to proceed when this pinned
-SHA no longer matches the contract's current SHA at that path.
+The authoritative contract is the work repo's own
+`docs/specs/role-handoff-contract.md` — this rulebook is a plugin installed
+into and pointed at a real work repo, and carries no copy of that file
+itself. The rows below describe only how the feasibility role behaves
+against whatever contract the work repo carries.
 
 **ACCEPTS**: `hypothesis` — the spec to assess. The market argument that
 motivated it is withheld regardless of what the input artifact actually
