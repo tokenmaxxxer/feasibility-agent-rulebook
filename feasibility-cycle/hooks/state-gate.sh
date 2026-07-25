@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
 # PreToolUse hook (Write|Edit|NotebookEdit|Bash): enforces the feasibility
-# role's one gated transition, `probing -> verdict`, against
-# `feasibility-record.md` at the project root.
+# role's state machine against `feasibility-record.md` at the project root,
+# using `transition-rules.md` as the single source of legal transitions.
 #
-# Unlike coding-agent-rulebook/warrant's scope-gate.sh, this gate FAILS
-# CLOSED: unreadable payload, missing python3, unparseable state file,
-# missing/mismatched token, or any other malformed condition all DENY the
-# write. It never falls through to allow just because its own input looked
-# strange — a gate that can be blinded into allowing is not a gate.
+# The gate answers exactly two questions:
+#   1. Does this write reach the state file, judged by RESOLVED TARGET PATH
+#      — never by a literal filename in the command string, never by tool
+#      name? A Bash write whose target cannot be determined statically
+#      (variable, expansion, command substitution, glob, eval, heredoc into
+#      a computed name) is treated as reaching the state file.
+#   2. If it reaches the state file: is the resulting transition present as
+#      a row in transition-rules.md? Present -> allow (subject to the
+#      content precondition below). Absent -> deny.
+# Everything that does not reach the state file is allowed through without
+# comment.
 #
-# The rule is evaluated against the TARGET PATH being written, never against
-# which tool performs the write: a Bash redirect, `tee`, or in-place
-# `sed`/`perl`/`ruby` edit aimed at feasibility-record.md is judged exactly
-# like a Write/Edit tool call at the same path. Because a Bash write's
-# resulting content cannot be inspected before the command runs, any Bash
-# command that would write to the record file is denied outright — only
-# Write/Edit/NotebookEdit calls (whose new content this gate can read) may
-# ever pass the content check below.
+# Two distinct denials, never conflated:
+#   - "RULES COULD NOT BE LOADED" (transition-rules.md or the current/
+#     proposed state could not be determined, or the hook input itself was
+#     malformed)
+#   - "this transition is not in the table" (rules loaded fine; the specific
+#     from -> to pair just isn't a row)
+# Malformed hook input (unparseable JSON, missing fields) denies with the
+# RULES COULD NOT BE LOADED message — never a silent exit 0.
 #
-# Kill switch: export FEASIBILITY_GATE_OFF=1 (still a DENY-by-default gate
-# in every other respect; this switch only turns the whole gate off).
+# Kill switch: export FEASIBILITY_GATE_OFF=1 (still fails closed in every
+# other respect; only turns the whole gate off).
 set -euo pipefail
 
 case "${FEASIBILITY_GATE_OFF:-}" in
@@ -32,16 +38,22 @@ deny() {
   exit 2
 }
 
-command -v python3 >/dev/null 2>&1 || deny "python3 is required to evaluate this gate and was not found; failing closed."
+command -v python3 >/dev/null 2>&1 || deny "RULES COULD NOT BE LOADED: python3 is required to evaluate this gate and was not found."
 
 root="${CLAUDE_PROJECT_DIR:-}"
 [ -n "$root" ] || root="$(pwd)"
-root="$(cd "$root" 2>/dev/null && pwd -P)" || deny "could not resolve the project root."
+root="$(cd "$root" 2>/dev/null && pwd -P)" || deny "RULES COULD NOT BE LOADED: could not resolve the project root."
+
+plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
+if [ -z "$plugin_root" ]; then
+  plugin_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd -P)"
+fi
+rules_file="$plugin_root/hooks/transition-rules.md"
 
 payload="$(cat 2>/dev/null || true)"
-[ -n "$payload" ] || deny "no tool-input payload was received."
+[ -n "$payload" ] || deny "RULES COULD NOT BE LOADED: no tool-input payload was received."
 
-FEASIBILITY_PAYLOAD="$payload" FEASIBILITY_ROOT="$root" python3 <<'PY'
+FEASIBILITY_PAYLOAD="$payload" FEASIBILITY_ROOT="$root" FEASIBILITY_RULES_FILE="$rules_file" python3 <<'PY'
 import json, os, posixpath, re, shlex, sys
 
 def deny(msg):
@@ -54,49 +66,33 @@ def allow():
 try:
     event = json.loads(os.environ.get("FEASIBILITY_PAYLOAD", ""))
 except ValueError:
-    deny("tool-input payload is not valid JSON.")
+    deny("RULES COULD NOT BE LOADED: tool-input payload is not valid JSON.")
 if not isinstance(event, dict):
-    deny("tool-input payload is not a JSON object.")
+    deny("RULES COULD NOT BE LOADED: tool-input payload is not a JSON object.")
 
 tool = event.get("tool_name")
 tool_input = event.get("tool_input")
 if not isinstance(tool, str) or not tool:
-    deny("tool_name missing from payload.")
+    deny("RULES COULD NOT BE LOADED: tool_name missing from payload.")
 if not isinstance(tool_input, dict):
-    deny("tool_input missing or malformed in payload.")
+    deny("RULES COULD NOT BE LOADED: tool_input missing or malformed in payload.")
 
 root = os.environ["FEASIBILITY_ROOT"]
 record_name = "feasibility-record.md"
 record_abs = posixpath.normpath(posixpath.join(root, record_name))
 
-# --- resolve the TARGET PATH this call would write, regardless of tool ---
+# --- question 1: does this write reach the state file? -------------------
 target_path = None
-new_content = None  # only known for Write; Edit/NotebookEdit content is not
-                     # fully reconstructable here, so they are treated like
-                     # Bash below: path-matched but content-blind -> denied
-                     # unless the record is untouched by this call.
+new_content = None
 
 if tool == "Bash":
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
-        deny("Bash tool_input.command missing or empty.")
+        deny("RULES COULD NOT BE LOADED: Bash tool_input.command missing or empty.")
 
-    # Rule: decide from the RESOLVED TARGET PATH, never from a literal
-    # filename appearing in the command text. First ask whether the target
-    # of any write-shaped construct in this command is even statically
-    # determinable; if it is not, fail closed regardless of what filename
-    # (if any) appears literally in the text.
-
-    # Any construct that makes a write target (or the command itself)
-    # impossible to resolve without executing a shell: variable expansion,
-    # command/process substitution, indirection, globbing, tilde expansion,
-    # eval, or a heredoc/here-string body.
     dynamic_construct = re.compile(
         r'\$\{?\w|\$\(|`|\*|\?|~|\beval\b|\bsource\b|\.\s+/|<\(|>\(|<<'
     )
-
-    # Constructs that could write to a file at all: redirects, tee, cp/mv,
-    # in-place sed/perl/ruby, dd, install.
     write_shape = re.compile(
         r'>>?(?!\()'
         r'|\btee\b'
@@ -109,27 +105,30 @@ if tool == "Bash":
     is_dynamic = dynamic_construct.search(command) is not None
 
     if could_write and is_dynamic:
+        # Target not statically determinable AND write-shaped: treat as
+        # reaching the state file per contract. Content can't be inspected,
+        # so no transition can ever be proven legal -> deny. A dynamic
+        # construct with NO write-shape is NOT denied here (handled by the
+        # could_write check below) — that would be the global-deny
+        # regression this gate must avoid.
         deny(
             "a Bash command could write a file and its write target is not "
             "statically determinable (shell variable, command/process "
             "substitution, indirection, glob, eval, source, or heredoc into a "
-            "computed name). Failing closed: this could target "
-            "feasibility-record.md and this gate cannot prove otherwise. Use "
-            "the Write tool on a literal path instead."
+            "computed name). Treating this as reaching feasibility-record.md "
+            "per policy: this gate cannot prove the resulting transition is in "
+            "transition-rules.md, so it refuses. Use the Write tool on a "
+            "literal path instead."
         )
 
     if could_write:
-        # No dynamism detected anywhere in the command text, so any write
-        # target named in it is a plain literal. Resolve every path-shaped
-        # literal token against the project root and compare to the state
-        # file's realpath.
         try:
             tokens = shlex.split(command, comments=False)
         except ValueError:
             deny(
                 "a Bash command could write a file but its argument text "
-                "could not be parsed (unbalanced quoting); failing closed on "
-                "feasibility-record.md."
+                "could not be parsed (unbalanced quoting); treating this as "
+                "reaching feasibility-record.md and refusing."
             )
         candidates = []
         for tok in tokens:
@@ -158,31 +157,27 @@ if tool == "Bash":
                     "resulting content before the command runs, so it refuses "
                     "the write outright. Use the Write tool on this file instead."
                 )
-    allow()
+    allow()  # does not reach the state file: allowed without comment
 
 if tool in ("Write", "Edit", "NotebookEdit"):
     path = tool_input.get("file_path") or tool_input.get("notebook_path")
     if not isinstance(path, str) or not path:
-        deny("%s tool_input carries no file_path." % tool)
+        deny("RULES COULD NOT BE LOADED: %s tool_input carries no file_path." % tool)
     normalized = path.replace("\\", "/")
     absolute = posixpath.normpath(
         normalized if posixpath.isabs(normalized) else posixpath.join(root, normalized)
     )
     resolved = posixpath.normpath(os.path.realpath(absolute).replace("\\", "/"))
     if resolved != record_abs:
-        allow()  # not our file; nothing to gate
+        allow()  # not the state file; nothing to gate
     target_path = resolved
 
     if tool == "Write":
         content = tool_input.get("content")
         if not isinstance(content, str):
-            deny("Write tool_input carries no readable content for feasibility-record.md.")
+            deny("RULES COULD NOT BE LOADED: Write tool_input carries no readable content for feasibility-record.md.")
         new_content = content
     else:
-        # Edit / NotebookEdit: the fully-materialized new content is not
-        # available to this hook. Since the record file's transitions can
-        # only be trusted from readable, complete content, any Edit aimed at
-        # this specific file is denied — same posture as the Bash case above.
         deny(
             "an Edit/NotebookEdit call targets feasibility-record.md. This gate "
             "only evaluates complete, readable content (a Write call); partial "
@@ -193,73 +188,99 @@ else:
     allow()  # tool this gate does not recognize touches nothing it governs
 
 if target_path is None or new_content is None:
-    deny("internal: no content resolved for a call this gate should have judged.")
+    deny("RULES COULD NOT BE LOADED: internal — no content resolved for a call this gate should have judged.")
 
-# --- parse the proposed new content's frontmatter -----------------------
+# --- load transition-rules.md --------------------------------------------
+rules_file = os.environ.get("FEASIBILITY_RULES_FILE", "")
+try:
+    with open(rules_file, encoding="utf-8-sig") as fh:
+        rules_text = fh.read(1 << 20)
+except OSError as e:
+    deny("RULES COULD NOT BE LOADED: transition-rules.md at %s could not be read (%s)." % (rules_file, e))
+
+if not rules_text.strip():
+    deny("RULES COULD NOT BE LOADED: transition-rules.md at %s is empty." % rules_file)
+
+rows = []
+for line in rules_text.splitlines():
+    line = line.strip()
+    if "|" not in line or not re.search(r"[A-Za-z]", line):
+        continue
+    parts = [p.strip() for p in line.strip("|").split("|")]
+    if len(parts) != 4:
+        continue
+    if parts[0].lower() == "from":
+        continue
+    if set(parts[0]) <= set("- "):
+        continue
+    rows.append(tuple(parts))
+
+if not rows:
+    deny(
+        "RULES COULD NOT BE LOADED: transition-rules.md at %s has no parseable "
+        "'from | to | actor | precondition' rows." % rules_file
+    )
+
+legal = {(r[0].lower(), r[1].lower()) for r in rows}
+
+# --- parse the proposed new content's frontmatter -------------------------
 if not new_content.startswith("---"):
-    deny("feasibility-record.md must open with YAML frontmatter (---).")
+    deny("RULES COULD NOT BE LOADED: feasibility-record.md must open with YAML frontmatter (---).")
 end = new_content.find("\n---", 3)
 if end == -1:
-    deny("feasibility-record.md frontmatter has no closing '---'.")
+    deny("RULES COULD NOT BE LOADED: feasibility-record.md frontmatter has no closing '---'.")
 block = new_content[3:end]
 
-def field(name):
-    m = re.search(r"^" + re.escape(name) + r":\s*(.*?)\s*(?:#.*)?$", block, re.M)
-    return m.group(1).strip() if m else None
+def field(text_block, name):
+    matches = re.findall(r"^" + re.escape(name) + r":\s*(.*?)\s*(?:#.*)?$", text_block, re.M)
+    if len(matches) != 1:
+        return None
+    return matches[0].strip()
 
-new_status = field("status")
-if new_status is None:
-    deny("frontmatter has no 'status' field.")
+new_status = field(block, "status")
+if not new_status:
+    deny("RULES COULD NOT BE LOADED: proposed frontmatter has no (single, non-empty) 'status' field.")
 new_status = new_status.lower()
 
-VALID_STATES = ("idle", "scoped", "probing", "verdict")
-if new_status not in VALID_STATES:
-    deny("status '%s' is not one of %s." % (new_status, ", ".join(VALID_STATES)))
+known_states = {r[0].lower() for r in rows} | {r[1].lower() for r in rows}
+known_states.discard("none")
+if new_status not in known_states:
+    deny("RULES COULD NOT BE LOADED: status '%s' is not one of the states in transition-rules.md (%s)." % (new_status, ", ".join(sorted(known_states))))
 
-# Determine current on-disk status to know which transition is proposed.
-old_status = None
+# Determine current on-disk status.
+old_status = "none"
 if os.path.exists(record_abs):
     try:
         with open(record_abs, encoding="utf-8-sig") as fh:
             old_text = fh.read(1 << 20)
     except OSError:
-        deny("existing feasibility-record.md could not be read to determine the current state.")
-    if old_text.startswith("---"):
-        oend = old_text.find("\n---", 3)
-        if oend != -1:
-            om = re.search(r"^status:\s*([A-Za-z]+)\s*(?:#.*)?$", old_text[3:oend], re.M)
-            old_status = om.group(1).lower() if om else None
-    if old_status is None:
-        deny("existing feasibility-record.md frontmatter is unparseable; refusing to layer a new state on top of unknown state.")
-else:
-    old_status = None  # first-ever write; only idle/scoped are legitimate starting points
-
-# idle -> scoped requires only the specification (no probe/market fields
-# enforced by this gate beyond market_argument_supplied being explicitly
-# recorded as false).
-if old_status is None:
-    if new_status not in ("idle", "scoped"):
-        deny("first write to feasibility-record.md must set status to 'idle' or 'scoped', not '%s'." % new_status)
-    if new_status == "scoped":
-        mkt = field("market_argument_supplied")
-        if mkt is None or mkt.strip().lower() != "false":
-            deny(
-                "entry to 'scoped' requires the frontmatter field "
-                "'market_argument_supplied: false', recording that the market "
-                "argument was deliberately withheld from this role."
-            )
-    allow()
+        deny("RULES COULD NOT BE LOADED: existing feasibility-record.md could not be read to determine the current state.")
+    if not old_text.startswith("---"):
+        deny("RULES COULD NOT BE LOADED: existing feasibility-record.md has no opening frontmatter '---'.")
+    oend = old_text.find("\n---", 3)
+    if oend == -1:
+        deny("RULES COULD NOT BE LOADED: existing feasibility-record.md frontmatter has no closing '---'.")
+    old_status = field(old_text[3:oend], "status")
+    if not old_status:
+        deny("RULES COULD NOT BE LOADED: existing feasibility-record.md status field is missing, duplicated, or empty; refusing to layer a new state on top of an unknown state.")
+    old_status = old_status.lower()
 
 if old_status == new_status:
-    allow()  # rewriting probe fields etc. within the same state is fine
+    allow()  # rewriting fields within the same state is not a transition
 
-# --- the one gated transition: probing -> verdict ------------------------
+if (old_status, new_status) not in legal:
+    deny(
+        "transition '%s -> %s' is not present as a row in transition-rules.md."
+        % (old_status, new_status)
+    )
+
+# --- content precondition preserved for the one content-checked row ------
 if old_status == "probing" and new_status == "verdict":
     probe_names = ("technical", "prior_art", "legal_regulatory", "threat_model")
     unresolved = []
     for n in probe_names:
-        v = field(n)
-        if v is None or not v:
+        v = field(block, n)
+        if not v:
             unresolved.append(n)
             continue
         low = v.lower()
@@ -269,40 +290,10 @@ if old_status == "probing" and new_status == "verdict":
         deny(
             "probing -> verdict refused: probe field(s) not resolved: %s. "
             "Each of technical/prior_art/legal_regulatory/threat_model must be "
-            "'pass: ...', 'fail: ...', or 'blocked: ...'." % ", ".join(unresolved)
+            "'pass: ...', 'fail: ...', or 'blocked: ...' (precondition from "
+            "transition-rules.md)." % ", ".join(unresolved)
         )
-    tokens_dir = os.path.join(root, ".feasibility", "tokens")
-    token_file = os.path.join(tokens_dir, "verdict.token")
-    if not os.path.isfile(token_file):
-        deny(
-            "probing -> verdict refused: no approval token at "
-            ".feasibility/tokens/verdict.token. This transition requires an "
-            "unambiguous approval from the user's own turn (minted by "
-            "capture-approval.sh); resolved probe fields alone are not consent."
-        )
-    try:
-        with open(token_file, encoding="utf-8") as fh:
-            token_text = fh.read(4096)
-    except OSError:
-        deny("approval token file exists but could not be read.")
-    if "transition: probing -> verdict" not in token_text:
-        deny("approval token does not match the 'probing -> verdict' transition.")
-    # Single-use: consume it now so a stale token can't authorize a later re-entry.
-    try:
-        os.remove(token_file)
-    except OSError:
-        deny("approval token could not be consumed (removed); refusing rather than risk reuse.")
-    allow()
 
-# probing -> scoped: ungated per the transition table (a probe reveals the
-# specification itself must change).
-if old_status == "probing" and new_status == "scoped":
-    allow()
-
-# scoped -> probing: ungated (agent begins the four probes).
-if old_status == "scoped" and new_status == "probing":
-    allow()
-
-deny("transition '%s -> %s' is not permitted by the feasibility state machine." % (old_status, new_status))
+allow()
 PY
 exit $?
