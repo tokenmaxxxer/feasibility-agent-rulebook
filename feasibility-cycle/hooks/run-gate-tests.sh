@@ -3,14 +3,18 @@
 # and (for denials) that a "DENIED" message appears on stderr. Exits non-zero
 # if any case fails.
 #
-# Cases (a)-(l) below run against THIS repo's own on-disk checkout (root
-# resolution walks up from the gate script's own location), so they depend
-# on this repo carrying its own docs/specs/role-handoff-contract.md. That
-# file now exists (see docs/proposals/2026-07-27-repo-local-contract-file.md),
-# so these cases exercise real transition-table logic instead of failing
-# uniformly on the contract-presence check. The fresh-repo cases (m)-(p)
-# below seed their own throwaway contract file inside a mocked repo and are
-# unaffected either way.
+# Cases (a)-(l) below each build their own throwaway git repo under $work
+# (root resolution now derives from CLAUDE_PROJECT_DIR — validated against
+# the tool call's target and against plausible-project-root markers — per
+# docs/proposals/2026-07-26-gate-root-from-project-dir.md), and write to a
+# subject-scoped record path under docs/reports/records/ — feasibility's
+# only owned-path shape under the v2 per-subject contract (a flat
+# feasibility-record.md is NOT an owned path and is silently let through
+# unjudged by is_owned_path(), which these cases used to trip over: they
+# used to accidentally pass by resolving to the real on-disk repo instead
+# of $work, entirely independent of what they intended to test). The
+# fresh-repo cases (m)-(p) below seed their own throwaway contract file
+# inside a mocked repo and are unaffected either way.
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -24,15 +28,18 @@ work=""
 cleanup() { [ -n "$work" ] && rm -rf "$work"; }
 trap cleanup EXIT
 
+record_path="docs/reports/records/gate-test-subject/feasibility.md"
+
 new_work() {
   cleanup
   work="$(mktemp -d)"
-  # Rule 0 needs the contract in the repo under test. Before the gate
-  # anchored on the project being worked in, this passed because root
-  # resolved to the RULEBOOK repo, which carries one — the fixtures were
-  # never exercising Rule 0 against themselves.
-  mkdir -p "$work/docs/specs"
-  printf '# role-handoff-contract\n' > "$work/docs/specs/role-handoff-contract.md"
+  # $work must itself be a plausible project root (per
+  # docs/proposals/2026-07-26-gate-root-from-project-dir.md's §2(a2)(ii))
+  # for CLAUDE_PROJECT_DIR=$work (as run_gate sets it) to validate.
+  git init -q "$work" >/dev/null 2>&1
+  mkdir -p "$work/docs/specs" "$(dirname "$work/$record_path")"
+  printf 'placeholder collaboration contract for gate tests\n' \
+    > "$work/docs/specs/role-handoff-contract.md"
 }
 
 run_gate() {
@@ -44,7 +51,7 @@ run_gate() {
 
 seed_record() {
   # $1 = content
-  printf '%s' "$1" > "$work/feasibility-record.md"
+  printf '%s' "$1" > "$work/$record_path"
 }
 
 json_write() {
@@ -91,7 +98,7 @@ check() {
 # 'idle' has no idle|idle row.
 new_work
 seed_record $'---\nstatus: idle\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\nnote: changed\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: idle\nnote: changed\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(a) same-state write, no self-loop row (idle) -> deny" deny "$code"
 
@@ -99,7 +106,7 @@ check "(a) same-state write, no self-loop row (idle) -> deny" deny "$code"
 # 'probing' has probing|probing|user row.
 new_work
 seed_record $'---\nstatus: probing\ntechnical: pass foo\nprior_art: pass bar\nlegal_regulatory: pass baz\nthreat_model: pass qux\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: probing\ntechnical: pass foo\nprior_art: pass bar\nlegal_regulatory: pass baz\nthreat_model: pass qux\nnote: timebox extended\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: probing\ntechnical: pass foo\nprior_art: pass bar\nlegal_regulatory: pass baz\nthreat_model: pass qux\nnote: timebox extended\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(b) same-state write, has self-loop row (probing) -> allow" allow "$code"
 
@@ -107,7 +114,7 @@ check "(b) same-state write, has self-loop row (probing) -> allow" allow "$code"
 # scoped -> probing | agent
 new_work
 seed_record $'---\nstatus: scoped\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: probing\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: probing\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(c) legal transition scoped -> probing -> allow" allow "$code"
 
@@ -115,23 +122,23 @@ check "(c) legal transition scoped -> probing -> allow" allow "$code"
 # idle -> verdict is not a row.
 new_work
 seed_record $'---\nstatus: idle\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: verdict\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: verdict\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(d) illegal transition idle -> verdict -> deny" deny "$code"
 
 # (e) Bash-shaped write resolving to the state file is judged the same way,
-# including the historical bypass shape f=feasibility-record.md; ... > "$f"
+# including the historical bypass shape f=<record path>; ... > "$f"
 new_work
 seed_record $'---\nstatus: idle\n---\nbody\n'
-payload="$(json_bash 'f=feasibility-record.md; printf "hi" > "$f"')"
+payload="$(json_bash "f=$record_path; printf \"hi\" > \"\$f\"")"
 code="$(run_gate "$payload")"
-check "(e) Bash bypass shape f=feasibility-record.md > \"\$f\" -> deny" deny "$code"
+check "(e) Bash bypass shape f=\$record_path > \"\$f\" -> deny" deny "$code"
 
 new_work
 seed_record $'---\nstatus: idle\n---\nbody\n'
-payload="$(json_bash 'echo hi > feasibility-record.md')"
+payload="$(json_bash "echo hi > $record_path")"
 code="$(run_gate "$payload")"
-check "(e2) Bash literal-path redirect into feasibility-record.md -> deny" deny "$code"
+check "(e2) Bash literal-path redirect into owned record path -> deny" deny "$code"
 
 # (f) malformed hook JSON -> DENIED with visible output, never silent exit 0
 new_work
@@ -142,7 +149,7 @@ check "(f) malformed hook JSON -> deny with visible message" deny "$code"
 # not be loaded" (the hunter's exact reproduction)
 new_work
 seed_record $'---\nstatus: (none)\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: idle\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(g) existing status '(none)' -> deny (rules could not be loaded)" deny "$code"
 grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (g) message did not mention rules could not be loaded"; fail=$((fail+1)); }
@@ -150,7 +157,7 @@ grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (g) message
 # (h) existing state file with an empty status value -> DENIED likewise
 new_work
 seed_record $'---\nstatus:\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: idle\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(h) existing status empty -> deny (rules could not be loaded)" deny "$code"
 grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (h) message did not mention rules could not be loaded"; fail=$((fail+1)); }
@@ -158,7 +165,7 @@ grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (h) message
 # (i) existing state file with a value not in the known-state set -> DENIED
 new_work
 seed_record $'---\nstatus: not-a-real-state\n---\nbody\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: idle\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(i) existing status out-of-set -> deny (rules could not be loaded)" deny "$code"
 grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (i) message did not mention rules could not be loaded"; fail=$((fail+1)); }
@@ -167,40 +174,85 @@ grep -qi "rules could not be loaded" "$work/stderr" || { echo "FAIL: (i) message
 # whitespace/CRLF -> treated as that valid state, not as broken
 new_work
 seed_record $'---\r\nstatus: scoped   \r\n---\r\nbody\r\n'
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: probing\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: probing\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(j) existing status 'scoped' with trailing ws/CRLF -> allow (scoped -> probing)" allow "$code"
 
 # (k) state file genuinely absent -> the (none) -> X bootstrap row is still
 # ALLOWED (regression guard)
 new_work
-payload="$(json_write "$work/feasibility-record.md" $'---\nstatus: idle\n---\nbody\n')"
+payload="$(json_write "$work/$record_path" $'---\nstatus: idle\n---\nbody\n')"
 code="$(run_gate "$payload")"
 check "(k) genuinely absent state file -> (none) -> idle bootstrap -> allow" allow "$code"
 
-# (l) the gate follows the project, not its own location ------------------
-# Where this hook sits on disk must not decide what it guards. Copy the whole
-# hooks directory somewhere outside any project, run that copy with the
-# project as cwd, and it must reach the same decision as the in-repo copy.
-#
-# Until 2026-07-26 root was the nearest `.git` ABOVE the hook itself. A
-# rulebook loaded as a plugin from its own checkout — which is how an
-# orchestrator swaps rulebooks per role — therefore guarded the rulebook's
-# repo, and every write in the real project fell outside its owned paths and
-# was allowed, silently, exit 0.
+# (l) CLAUDE_PROJECT_DIR unset: git-toplevel fallback ---------------------
+# Per docs/proposals/2026-07-26-gate-root-from-project-dir.md §2(b): with
+# CLAUDE_PROJECT_DIR unset, root falls back to the git top-level of the
+# PreToolUse target path, else the git top-level of cwd.
 repo_root="$(cd "$script_dir/../.." && pwd -P)"
-elsewhere="$(mktemp -d)"
-cp -R "$script_dir" "$elsewhere/hooks"
-payload_l='{"tool_name":"Write","tool_input":{"file_path":"docs/reports/records/s/feasibility.md","content":"---\nstatus: idle\n---\n"}}'
+outside_dir="$(mktemp -d)"
+l_scratch_subject="gateroot-l-test"
+l_scratch_dir="$repo_root/docs/reports/records/$l_scratch_subject"
+mkdir -p "$l_scratch_dir"
+payload_l="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"docs/reports/records/$l_scratch_subject/feasibility.md\",\"content\":\"---\\nstatus: idle\\n---\\nbody\\n\"}}"
 out_in="$(cd "$repo_root" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_l" "$gate" 2>&1)"
 code_in=$?
-out_out="$(cd "$repo_root" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_l" "$elsewhere/hooks/state-gate.sh" 2>&1)"
-code_out=$?
-rm -rf "$elsewhere"
-if [ "$code_in" -eq "$code_out" ]; then
-  pass=$((pass+1)); echo "PASS: (l) a copy of the gate outside the rulebook reaches the same decision as the in-repo gate (exit $code_out)"
+rm -rf "$l_scratch_dir"
+if [ "$code_in" -eq 0 ]; then
+  echo "PASS: (l1) CLAUDE_PROJECT_DIR unset, invoked inside this repo — falls back to this repo's own git top-level and enforces normally (exit 0)"
+  pass=$((pass+1))
 else
-  fail=$((fail+1)); echo "FAIL: (l) the gate's own location changed its decision (in-repo exit $code_in, out-of-tree exit $code_out) — out: $out_out | in: $out_in"
+  echo "FAIL: (l1) CLAUDE_PROJECT_DIR unset, invoked inside this repo — expected exit 0 via git-toplevel fallback, got exit $code_in. Output: $out_in"
+  fail=$((fail+1))
+fi
+
+# (l2) CLAUDE_PROJECT_DIR unset, cwd AND target both outside any git
+# work-tree -> root is indeterminate -> refused (never silently allowed).
+out_out="$(cd "$outside_dir" && env -u CLAUDE_PROJECT_DIR CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_l" "$gate" 2>&1)"
+code_out=$?
+rm -rf "$outside_dir"
+if [ "$code_out" -ne 0 ]; then
+  echo "PASS: (l2) CLAUDE_PROJECT_DIR unset, cwd/target both outside any git work-tree — indeterminate root refused (exit $code_out)"
+  pass=$((pass+1))
+else
+  echo "FAIL: (l2) CLAUDE_PROJECT_DIR unset, cwd/target both outside any git work-tree — expected refused (non-zero), got exit 0. Output: $out_out"
+  fail=$((fail+1))
+fi
+
+# --- (q) target-repo-governance: CLAUDE_PROJECT_DIR pointed at an
+# unrelated, empty (but plausible-looking, git-initialized) directory, and
+# the Write targets an owned-tree path that is ALSO not inside any git
+# work-tree -> root is genuinely indeterminate -> default-deny per §2(c),
+# not silently allowed.
+unrelated_dir="$(mktemp -d)"
+git init -q "$unrelated_dir" >/dev/null 2>&1
+non_git_target_dir="$(mktemp -d)"
+scratch_subject_q="gateroot-unrelated-projectdir-test"
+mkdir -p "$non_git_target_dir/docs/reports/records/$scratch_subject_q"
+payload_q="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$non_git_target_dir/docs/reports/records/$scratch_subject_q/feasibility.md\",\"content\":\"---\\nstatus: idle\\n---\\nbody\\n\"}}"
+out_q="$(cd "$non_git_target_dir" && env CLAUDE_PROJECT_DIR="$unrelated_dir" CLAUDE_PLUGIN_ROOT="$plugin_root" bash -c 'printf "%s" "$1" | bash "$2"' _ "$payload_q" "$gate" 2>&1)"
+rc_q=$?
+rm -rf "$unrelated_dir" "$non_git_target_dir"
+if [ "$rc_q" -ne 0 ]; then
+  echo "PASS: (q) CLAUDE_PROJECT_DIR pointed at an unrelated empty dir, target's owned-tree write has no resolvable git root either — indeterminate root default-denied (exit $rc_q), not silently allowed"
+  pass=$((pass+1))
+else
+  echo "FAIL: (q) CLAUDE_PROJECT_DIR pointed at an unrelated empty dir, target has no resolvable git root — expected refused (default-deny), got exit 0 (silently allowed). Output: $out_q"
+  fail=$((fail+1))
+fi
+
+# --- (r) target-repo-governance: CLAUDE_PROJECT_DIR correctly set (target
+# is under it, and it looks like a project root) -> gate enforced normally
+# against that SEPARATE target project, not against this rulebook repo.
+new_work
+payload_r="{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$work/$record_path\",\"content\":\"---\\nstatus: verdict\\n---\\nbody\\n\"}}"
+code_r="$(run_gate "$payload_r")"
+if [ "$code_r" -ne 0 ]; then
+  echo "PASS: (r) valid CLAUDE_PROJECT_DIR pointed at a separate target project — illegal (none)->verdict bootstrap write refused there (exit $code_r)"
+  pass=$((pass+1))
+else
+  echo "FAIL: (r) valid CLAUDE_PROJECT_DIR pointed at a separate target project — expected refused, got exit 0."
+  fail=$((fail+1))
 fi
 
 # --- fresh-repo subject-scoped ownership + repo-local resolution cases ----
