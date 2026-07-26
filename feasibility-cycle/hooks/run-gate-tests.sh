@@ -751,6 +751,44 @@ new_work
 code="$(run_gate '{not json')"
 check_exit2 "(fc2) state-gate malformed JSON -> exit 2 (fail closed)" "$code"
 
+# === fail-closed trap-at-top (docs/proposals/2026-07-26-gates-fail-closed-trap-at-top.md)
+# ==========================================================================
+# Every PreToolUse tool-gating gate installs an EXIT trap (__fc) as its FIRST
+# executable statement, above set/source. Any abort that terminates with a
+# code that is neither 0 (allow) nor 2 (deny) — a failed `source`, a
+# set -euo pipefail trip, an unbound var, a syntax path — must be forced to
+# exit 2 (DENY), because Claude Code PreToolUse treats any non-2 exit as
+# NON-BLOCKING (fail-open). Here we induce a PRE-LOGIC abort in a copy of
+# each gate: right after the trap installs (and before any verdict logic can
+# run) we splice in a hard `exit 42`, standing in for a sourced-file failure
+# or any early crash. The trap must convert that 42 into a 2.
+new_work
+seed_record $'---\nstatus: idle\n---\nbody\n'
+valid_payload="$(json_write "$work/$record_path" $'---\nstatus: idle\n---\nbody\n')"
+for g in state-gate.sh record-fields-gate.sh path-ownership-gate.sh \
+         doc-bucket-gate.sh handbook-trigger-gate.sh trailer-gate.sh \
+         scope-record-gate.sh; do
+  src="$script_dir/$g"
+  # Confirm the trap is genuinely the first executable statement (line 2-3,
+  # immediately after the shebang, above any set/source).
+  if ! sed -n '2,3p' "$src" | grep -q 'trap __fc EXIT'; then
+    fail=$((fail+1)); echo "FAIL: (fc-trap $g) fail-closed trap is not installed at top (lines 2-3)"
+    continue
+  fi
+  tmpg="$work/mutated-$g"
+  # Splice `exit 42` in as a new line immediately after `trap __fc EXIT`,
+  # i.e. before any set/source/verdict logic can run: a pre-logic abort.
+  awk '{print} /^trap __fc EXIT$/ && !done {print "exit 42"; done=1}' "$src" > "$tmpg"
+  CLAUDE_PROJECT_DIR="$work" CLAUDE_PLUGIN_ROOT="$plugin_root" \
+    bash "$tmpg" <<<"$valid_payload" >"$work/stdout" 2>"$work/stderr"
+  rc=$?
+  if [ "$rc" = 2 ]; then
+    pass=$((pass+1)); echo "PASS: (fc-trap $g) pre-logic abort (rc=42) forced to exit 2 (fail closed)"
+  else
+    fail=$((fail+1)); echo "FAIL: (fc-trap $g) pre-logic abort expected exit 2, got $rc (fail OPEN)"; sed 's/^/  /' "$work/stderr"
+  fi
+done
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
+trap __fc EXIT
 # PreToolUse hook (Write|Edit|NotebookEdit|Bash): enforces the feasibility
 # role's state machine against its two v2-contract-owned per-subject record
 # paths (docs/reports/records/<subject>/feasibility.md and

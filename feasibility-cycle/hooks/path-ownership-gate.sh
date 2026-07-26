@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
+trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit|NotebookEdit): §11 path-ownership.
 # Generalizes coding's scope-gate.sh write-set shape to §11's static,
 # role-permanent owned-path table. A feasibility session may write only its

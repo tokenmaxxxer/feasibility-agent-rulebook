@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
+trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit|NotebookEdit): §20 minimum-content.
 # Peer to state-gate.sh on feasibility's owned record paths
 # (docs/reports/records/<subject>/feasibility.md and

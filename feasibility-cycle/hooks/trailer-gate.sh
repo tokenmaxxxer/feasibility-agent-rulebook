@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
+trap __fc EXIT
 # PreToolUse hook (Bash matching 'git commit'): §13 trailer.
 # When a feasibility unit is in progress (any owned feasibility record exists
 # in a non-terminal status) the commit message must carry this repo's

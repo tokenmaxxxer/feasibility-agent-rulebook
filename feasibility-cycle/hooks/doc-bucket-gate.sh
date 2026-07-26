@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
+trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit|NotebookEdit): §21 bucket half.
 # Refuses any write under docs/ that lands outside the six sanctioned
 # buckets (decisions, handbooks, proposals, reports, specs, _assets). A
