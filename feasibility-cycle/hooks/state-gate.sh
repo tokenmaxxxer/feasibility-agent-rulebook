@@ -129,6 +129,7 @@ fi
 # unset, or points somewhere unrelated.
 rules_file="$script_dir/transition-rules.md"
 
+set +e
 FEASIBILITY_PAYLOAD="$payload" FEASIBILITY_ROOT="$root" FEASIBILITY_RULES_FILE="$rules_file" python3 <<'PY'
 import json, os, posixpath, re, shlex, sys
 
@@ -138,6 +139,20 @@ def deny(msg):
 
 def allow():
     sys.exit(0)
+
+# PYTHON LAYER (fail-closed on internal error): any uncaught exception —
+# e.g. os.path.realpath raising ValueError on a null-byte/undecodable
+# file_path — becomes exit 2 (DENY) rather than the default exit 1, which
+# Claude Code treats as non-blocking (fail-open). SystemExit raised by
+# deny()/allow() bypasses excepthook, so the exact deny(2)/allow(0) verdict
+# paths are preserved unchanged.
+def _feas_fc_hook(_t, _v, _tb):
+    try:
+        sys.stderr.write("feasibility-cycle: DENIED - fail-closed: internal error: %s\n" % _v)
+    except Exception:
+        pass
+    os._exit(2)
+sys.excepthook = _feas_fc_hook
 
 try:
     event = json.loads(os.environ.get("FEASIBILITY_PAYLOAD", ""))
@@ -525,4 +540,12 @@ if old_status == "probing" and new_status == "verdict-provisional":
 
 allow()
 PY
-exit $?
+rc=$?
+# SHELL LAYER (fail-closed on internal error): the judge exits 0 (allow) or 2
+# (deny). Any other terminal code (crash, signal, interpreter death) is mapped
+# to exit 2 so a non-2 non-zero code cannot leak through as fail-open.
+if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
+  echo "feasibility-cycle: DENIED — fail-closed: internal error (judge exited $rc)" >&2
+  exit 2
+fi
+exit "$rc"

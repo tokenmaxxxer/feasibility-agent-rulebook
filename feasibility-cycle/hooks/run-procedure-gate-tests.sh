@@ -145,6 +145,42 @@ new_work
 code=$(run doc-bucket-gate.sh '{not json')
 check "doc-bucket: malformed JSON -> deny (fail closed)" deny "$code"
 
+# ===== fail-closed-on-internal-error crash tests =====
+# Frozen contract docs/proposals/2026-07-26-gates-fail-closed-on-internal-error.md:
+# a crash-inducing payload (null byte in file_path, or malformed JSON) must
+# resolve to EXACTLY exit 2 (DENY) — Claude Code blocks only on exit 2; any
+# other non-zero code is treated as non-blocking (fail-open). Previously a
+# null byte in file_path made os.path.realpath raise an uncaught ValueError
+# (exit 1 = fail-open). These cases assert exit == 2 specifically.
+check2() { # $1 label $2 code : assert DENY with exit code EXACTLY 2
+  if [ "$2" = 2 ] && grep -qi denied "$work/err"; then
+    pass=$((pass+1)); echo "PASS: $1 (exit=2)"
+  else
+    fail=$((fail+1)); echo "FAIL: $1 (expected exit=2 got=$2)"; sed 's/^/    /' "$work/err"
+  fi
+}
+json_nul_write() { # $1 = absolute path; JSON carries a trailing \u0000 escape
+  # Emit the null as the literal 6-char ASCII escape \u0000 (never a raw
+  # null byte, which bash command substitution silently strips). The gate's
+  # json.loads decodes it to a real null in file_path, so os.path.realpath
+  # raises ValueError -> the fail-closed path -> exit 2.
+  printf '{"tool_name":"Write","tool_input":{"file_path":"%s%s","content":"x"}}' "$1" '\u0000'
+}
+
+# Path-processing gates: null byte in file_path -> realpath ValueError -> exit 2.
+for g in scope-record-gate.sh record-fields-gate.sh path-ownership-gate.sh doc-bucket-gate.sh; do
+  new_work
+  code=$(run "$g" "$(json_nul_write "$work/$rec")")
+  check2 "$g: null-byte file_path -> exit 2 (fail closed)" "$code"
+done
+
+# All gates: malformed JSON -> exit 2 (DENY), not some other non-blocking code.
+for g in scope-record-gate.sh record-fields-gate.sh path-ownership-gate.sh doc-bucket-gate.sh handbook-trigger-gate.sh trailer-gate.sh; do
+  new_work
+  code=$(run "$g" '{not json')
+  check2 "$g: malformed JSON -> exit 2 (fail closed)" "$code"
+done
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

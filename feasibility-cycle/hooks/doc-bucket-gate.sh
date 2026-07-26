@@ -19,11 +19,25 @@ command -v python3 >/dev/null 2>&1 || deny "python3 is required and was not foun
 payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || deny "no tool-input payload was received."
 
+set +e
 FEAS_PAYLOAD="$payload" FEAS_CPD="${CLAUDE_PROJECT_DIR:-}" FEAS_CWD="$(pwd -P)" python3 <<'PY'
 import json, os, posixpath, re, sys, subprocess
 
 def deny(m): print("feasibility-cycle: DENIED (doc-bucket-gate) - %s" % m, file=sys.stderr); sys.exit(2)
 def allow(): sys.exit(0)
+
+# PYTHON LAYER (fail-closed on internal error): any uncaught exception —
+# including os.path.* raising ValueError on a null-byte/undecodable path —
+# must become exit 2 (DENY), never the default exit 1 (which Claude Code
+# treats as non-blocking = fail-open). SystemExit (allow()/deny()) bypasses
+# excepthook, so the exact allow(0)/deny(2) verdict paths are untouched.
+def _feas_fc_hook(_t, _v, _tb):
+    try:
+        sys.stderr.write("feasibility-cycle: DENIED (doc-bucket-gate) - fail-closed: internal error: %s\n" % _v)
+    except Exception:
+        pass
+    os._exit(2)
+sys.excepthook = _feas_fc_hook
 
 try:
     event = json.loads(os.environ.get("FEAS_PAYLOAD",""))
@@ -82,3 +96,13 @@ if len(parts) < 3 or parts[1] not in BUCKETS:
          "place it in the correct bucket instead." % (rel, ", ".join(BUCKETS)))
 allow()
 PY
+rc=$?
+# SHELL LAYER (fail-closed on internal error): the judge decides allow(exit 0)
+# or deny(exit 2). Map ANY other terminal code (crash, signal, missing
+# interpreter mid-run) to exit 2 so a non-2 non-zero code can never leak
+# through as a fail-open non-blocking result.
+if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
+  echo "feasibility-cycle: DENIED (doc-bucket-gate) — fail-closed: internal error (judge exited $rc)" >&2
+  exit 2
+fi
+exit "$rc"

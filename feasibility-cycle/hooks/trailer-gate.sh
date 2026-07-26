@@ -21,6 +21,7 @@ command -v git >/dev/null 2>&1 || deny "git is required and was not found."
 payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || deny "no tool-input payload was received."
 
+set +e
 FEAS_PAYLOAD="$payload" FEAS_CPD="${CLAUDE_PROJECT_DIR:-}" FEAS_CWD="$(pwd -P)" python3 <<'PY'
 import json, os, re, sys, shlex, subprocess
 
@@ -29,6 +30,17 @@ TERMINAL = {"verdict", "scope-approved"}
 
 def deny(m): print("feasibility-cycle: DENIED (trailer-gate) - %s" % m, file=sys.stderr); sys.exit(2)
 def allow(): sys.exit(0)
+
+# PYTHON LAYER (fail-closed on internal error): any uncaught exception becomes
+# exit 2 (DENY), never the default exit 1 (fail-open). SystemExit from
+# allow()/deny() bypasses excepthook, leaving the verdict paths untouched.
+def _feas_fc_hook(_t, _v, _tb):
+    try:
+        sys.stderr.write("feasibility-cycle: DENIED (trailer-gate) - fail-closed: internal error: %s\n" % _v)
+    except Exception:
+        pass
+    os._exit(2)
+sys.excepthook = _feas_fc_hook
 
 try:
     event = json.loads(os.environ.get("FEAS_PAYLOAD",""))
@@ -155,3 +167,11 @@ if not TRAILER_RE.search(text):
          "trailer ('Proposal: <path>'). Add the trailer identifying the governing proposal.")
 allow()
 PY
+rc=$?
+# SHELL LAYER (fail-closed on internal error): map any terminal code other
+# than 0 (allow) or 2 (deny) to exit 2.
+if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then
+  echo "feasibility-cycle: DENIED (trailer-gate) — fail-closed: internal error (judge exited $rc)" >&2
+  exit 2
+fi
+exit "$rc"

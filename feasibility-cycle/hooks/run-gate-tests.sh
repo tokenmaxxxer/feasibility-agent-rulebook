@@ -722,6 +722,35 @@ payload_v4b="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"apply_
 code_v4b="$(run_scope_gate "$payload_v4b")"
 check "(v4b) unknown-named WRITE tool, tokenless scope-approved, is still refused" deny "$code_v4b"
 
+# --- fail-closed-on-internal-error crash tests ------------------------------
+# Frozen contract docs/proposals/2026-07-26-gates-fail-closed-on-internal-error.md:
+# a crash-inducing payload must resolve to EXACTLY exit 2 (DENY). Claude Code
+# blocks only on exit 2; any other non-zero code is non-blocking (fail-open).
+# A null byte in file_path used to make os.path.realpath raise an uncaught
+# ValueError -> exit 1 (fail-open). These assert exit == 2 specifically.
+check_exit2() { # $1 label $2 code
+  if [ "$2" = 2 ] && grep -qi "denied" "$work/stderr"; then
+    pass=$((pass+1)); echo "PASS: $1 (exit=2)"
+  else
+    fail=$((fail+1)); echo "FAIL: $1 (expected exit=2 got=$2)"; sed 's/^/  /' "$work/stderr"
+  fi
+}
+
+# (fc1) state-gate: null byte in file_path -> realpath ValueError -> exit 2.
+new_work
+seed_record $'---\nstatus: idle\n---\nbody\n'
+# Null encoded as the literal 6-char ASCII escape backslash-u0000 (a raw
+# would be stripped by bash command substitution). json.loads in the gate
+# decodes it back to a real null in file_path -> realpath ValueError -> exit 2.
+nul_payload="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s%s","content":"x"}}' "$work/$record_path" '\u0000')"
+code="$(run_gate "$nul_payload")"
+check_exit2 "(fc1) state-gate null-byte file_path -> exit 2 (fail closed)" "$code"
+
+# (fc2) state-gate: malformed JSON -> exit 2.
+new_work
+code="$(run_gate '{not json')"
+check_exit2 "(fc2) state-gate malformed JSON -> exit 2 (fail closed)" "$code"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
