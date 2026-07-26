@@ -22,6 +22,16 @@
 # are literally determined and shown not to set scope-approved (or a valid
 # token covers the transition). This never mints or infers a token.
 #
+# Tool-agnostic default-deny (docs/proposals/2026-07-26-scope-record-gate-tool-agnostic.md):
+# the Write-only path used to deny every Edit/MultiEdit/NotebookEdit
+# unconditionally, which is safe but over-broad (it also blocked legitimate
+# non-transition writes via those tools). Edit/MultiEdit are now evaluated by
+# applying the edit to on-disk content, same shape as Write; any other tool
+# (NotebookEdit included) is judged by whether its payload exposes a
+# content-bearing field (new_source/cells/etc) — if none can be found, the
+# call is refused rather than allowed. There is no tool name for which this
+# gate silently allows an indeterminate write to the front record.
+#
 # Fail-closed: malformed/missing input, unresolvable root, unreadable record
 # => DENY (never a silent exit 0). Kill switch: FEASIBILITY_SCOPE_GATE_OFF=1.
 set -euo pipefail
@@ -301,29 +311,102 @@ if not re.match(r"^docs/reports/records/([^/]+)/feasibility\.md$", rel):
     allow()
 subject = rel.split("/")[3]
 
-# Proposed new status. Only Write carries full content; an Edit to this path
-# cannot be evaluated for the transition -> fail closed (mirrors state-gate).
+def _read_disk_resolved():
+    if not os.path.exists(resolved):
+        return None
+    try:
+        with open(resolved, encoding="utf-8-sig") as fh:
+            return fh.read(1 << 20)
+    except OSError:
+        return None
+
+# Proposed new content. Write carries full content directly. Edit/MultiEdit
+# are evaluated by applying the edit(s) to the on-disk text (same shape as
+# product-cycle's gate). Any other/future tool (NotebookEdit included) is
+# handled by the tool-agnostic default-deny below
+# (docs/proposals/2026-07-26-scope-record-gate-tool-agnostic.md): if a
+# literal resulting text cannot be extracted from the payload, the call is
+# refused rather than allowed — there is no tool name for which this gate
+# silently permits an indeterminate write to the front record.
 if tool == "Write":
     content = ti.get("content")
     if not isinstance(content, str):
         deny("Write carries no readable content for the feasibility record.")
-    new_status = frontmatter_status(content)
-    if new_status is None:
-        deny("proposed feasibility record has no single parseable 'status' field in its frontmatter.")
+    new_text = content
+elif tool == "Edit":
+    old_string = ti.get("old_string")
+    new_string = ti.get("new_string")
+    if not isinstance(old_string, str) or not isinstance(new_string, str):
+        deny("Edit call on the front record is missing old_string/new_string (fail-closed).")
+    disk = _read_disk_resolved()
+    if old_string == "":
+        new_text = new_string
+    else:
+        if disk is None:
+            deny("Edit call on the front record but the on-disk file could not be read (fail-closed).")
+        if old_string not in disk:
+            deny("Edit call's old_string was not found verbatim in the front record (fail-closed).")
+        new_text = disk.replace(old_string, new_string,
+                                (10**9 if ti.get("replace_all") is True else 1))
+elif tool == "MultiEdit":
+    edits = ti.get("edits")
+    if not isinstance(edits, list) or not edits:
+        deny("MultiEdit call on the front record has no usable edits list (fail-closed).")
+    disk = _read_disk_resolved()
+    text = disk if disk is not None else ""
+    for e in edits:
+        if not isinstance(e, dict):
+            deny("MultiEdit call has a non-object edit entry (fail-closed).")
+        o_ = e.get("old_string"); n_ = e.get("new_string")
+        if not isinstance(o_, str) or not isinstance(n_, str):
+            deny("MultiEdit edit missing old_string/new_string (fail-closed).")
+        if o_ == "":
+            text = n_; continue
+        if o_ not in text:
+            deny("MultiEdit old_string not found verbatim at the point it is applied (fail-closed).")
+        text = text.replace(o_, n_, (10**9 if e.get("replace_all") is True else 1))
+    new_text = text
 else:
-    deny("an Edit/MultiEdit/NotebookEdit targets the feasibility front record; this gate "
-         "only evaluates a complete Write. Rewrite the whole file with Write so the "
-         "scope-approval transition can be judged.")
+    def _generic_content(tid):
+        for key in ("content", "new_source", "text", "data"):
+            v = tid.get(key)
+            if isinstance(v, str):
+                return v
+        cells = tid.get("cells")
+        if isinstance(cells, list):
+            parts = []
+            for c in cells:
+                if not isinstance(c, dict):
+                    continue
+                src = c.get("source") if "source" in c else c.get("new_source")
+                if isinstance(src, str):
+                    parts.append(src)
+                elif isinstance(src, list) and all(isinstance(x, str) for x in src):
+                    parts.append("".join(src))
+            if parts:
+                return "\n".join(parts)
+        return None
+
+    generic_content = _generic_content(ti)
+    if generic_content is None:
+        deny(
+            "tool '%s' targets the front record docs/reports/records/%s/feasibility.md but this "
+            "gate cannot literally determine the resulting content from its payload shape "
+            "(fail-closed): a tool call whose effect on the gated scope-approved transition "
+            "cannot be determined is refused, never allowed by default." % (tool, subject)
+        )
+    new_text = generic_content
+
+new_status = frontmatter_status(new_text)
+if new_status is None:
+    deny("proposed feasibility record has no single parseable 'status' field in its frontmatter.")
 
 # Current on-disk status.
-if not os.path.exists(resolved):
+disk_now = _read_disk_resolved()
+if disk_now is None:
     old_status = "(none)"
 else:
-    try:
-        with open(resolved, encoding="utf-8-sig") as fh:
-            old_status = frontmatter_status(fh.read(1 << 20))
-    except OSError:
-        deny("existing feasibility record could not be read to determine the current state.")
+    old_status = frontmatter_status(disk_now)
     if old_status is None:
         deny("existing feasibility record has no single parseable 'status' field.")
 

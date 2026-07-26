@@ -501,6 +501,104 @@ code_n4="$(run_scope_gate "$payload_n4")"
 rm -f /tmp/feasibility-scope-record-gate-unrelated-scratch.txt
 check "(n4) Bash write unrelated to the front record tree is left ungated" allow "$code_n4"
 
+# === tool-agnostic default-deny (docs/proposals/2026-07-26-scope-record-gate-tool-agnostic.md)
+# feasibility's non-Write path used to deny every Edit/MultiEdit/NotebookEdit
+# unconditionally (safe but over-broad — legitimate non-transition writes via
+# those tools were blocked too). It now evaluates Edit/MultiEdit by applying
+# the edit to on-disk content, and NotebookEdit/unrecognized tools by
+# extracting a content-bearing field, judging each exactly like Write. These
+# cases prove: NotebookEdit and an arbitrary unrecognized tool are refused
+# tokenless; every recognized tool passes with a valid token; every
+# recognized tool still passes a normal, non-scope-approved write.
+json_notebookedit() { # <path> <new_source>
+  python3 -c 'import json,sys;print(json.dumps({"tool_name":"NotebookEdit","tool_input":{"notebook_path":sys.argv[1],"new_source":sys.argv[2]}}))' "$1" "$2"
+}
+json_unknown_tool() { # <path> <content>
+  python3 -c 'import json,sys;print(json.dumps({"tool_name":"SomeFutureTool","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"
+}
+mint_token_feas() { # subject
+  mkdir -p "$work/docs/reports/records/$1/tokens"
+  printf 'approved by human\n' > "$work/docs/reports/records/$1/tokens/scope-approved.token"
+}
+
+# --- (t1) NotebookEdit-authored, tokenless scope-approved -> REFUSED -------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_t1="$(json_notebookedit "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+code_t1="$(run_scope_gate "$payload_t1")"
+check "(t1) NotebookEdit-authored tokenless scope-approved transition is refused" deny "$code_t1"
+
+# --- (t2) unrecognized/other-tool, tokenless scope-approved -> REFUSED -----
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_t2="$(json_unknown_tool "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+code_t2="$(run_scope_gate "$payload_t2")"
+check "(t2) unrecognized-tool tokenless scope-approved transition is refused" deny "$code_t2"
+
+# --- (t3) properly-tokened transition PASSES for every tool ---------------
+for tname in Write Edit MultiEdit NotebookEdit Bash; do
+  new_work
+  seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+  mint_token_feas "gate-test-subject"
+  case "$tname" in
+    Write)
+      payload_t3="$(json_write "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+      ;;
+    Edit)
+      payload_t3="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":"status: scope-proposed","new_string":"status: scope-approved"}}))' "$work/$record_path")"
+      ;;
+    MultiEdit)
+      payload_t3="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"MultiEdit","tool_input":{"file_path":sys.argv[1],"edits":[{"old_string":"status: scope-proposed","new_string":"status: scope-approved"}]}}))' "$work/$record_path")"
+      ;;
+    NotebookEdit)
+      payload_t3="$(json_notebookedit "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+      ;;
+    Bash)
+      bash_cmd_t3="cat > $record_path <<'EOF'
+---
+status: scope-approved
+---
+body
+EOF"
+      payload_t3="$(json_bash "$bash_cmd_t3")"
+      ;;
+  esac
+  code_t3="$(run_scope_gate "$payload_t3")"
+  check "(t3-$tname) tokened scope-approved transition via $tname is allowed" allow "$code_t3"
+done
+
+# --- (t4) normal, non-scope-approved write still PASSES for every tool -----
+for tname in Write Edit MultiEdit NotebookEdit Bash; do
+  new_work
+  seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+  case "$tname" in
+    Write)
+      payload_t4="$(json_write "$work/$record_path" $'---\nstatus: scope-proposed\nnote: still gathering\n---\nbody\n')"
+      ;;
+    Edit)
+      payload_t4="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":"status: scope-proposed","new_string":"status: scope-proposed\nnote: still gathering"}}))' "$work/$record_path")"
+      ;;
+    MultiEdit)
+      payload_t4="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"MultiEdit","tool_input":{"file_path":sys.argv[1],"edits":[{"old_string":"status: scope-proposed","new_string":"status: scope-proposed\nnote: still gathering"}]}}))' "$work/$record_path")"
+      ;;
+    NotebookEdit)
+      payload_t4="$(json_notebookedit "$work/$record_path" $'---\nstatus: scope-proposed\nnote: still gathering\n---\nbody\n')"
+      ;;
+    Bash)
+      bash_cmd_t4="cat > $record_path <<'EOF'
+---
+status: scope-proposed
+note: still gathering
+---
+body
+EOF"
+      payload_t4="$(json_bash "$bash_cmd_t4")"
+      ;;
+  esac
+  code_t4="$(run_scope_gate "$payload_t4")"
+  check "(t4-$tname) normal non-scope-approved write via $tname still passes" allow "$code_t4"
+done
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
