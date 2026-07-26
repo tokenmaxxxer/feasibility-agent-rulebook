@@ -48,23 +48,24 @@ command -v python3 >/dev/null 2>&1 || deny "RULES COULD NOT BE LOADED: python3 i
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-# The state file's path is anchored to the repository root, found by walking
-# UP from this hook script's own on-disk location to the nearest enclosing
-# `.git`. The process working directory (CLAUDE_PROJECT_DIR/$PWD) is never
-# consulted for this: a cwd outside the repo must not cause the state file
-# to be resolved anywhere but inside this repo.
-root=""
-dir="$script_dir"
-while [ -n "$dir" ]; do
-  if [ -e "$dir/.git" ]; then
-    root="$dir"
-    break
-  fi
-  parent="$(dirname "$dir")"
-  [ "$parent" = "$dir" ] && break
-  dir="$parent"
-done
-[ -n "$root" ] || deny "RULES COULD NOT BE LOADED: could not find an enclosing .git directory to anchor the project root (walked up from $script_dir)."
+# Root is the repository being worked in: CLAUDE_PROJECT_DIR when the harness
+# sets it, otherwise the process cwd, anchored on that directory's git root so
+# an invocation from a subdirectory still resolves to the project root.
+#
+# It is deliberately NOT the nearest `.git` above this hook's own location.
+# That coincides with the project only while the rulebook is vendored into it.
+# Loaded as a plugin from its own checkout — which is how an orchestrator
+# swaps rulebooks per role — it resolves to the RULEBOOK's repo, and the gate
+# then guards a repository nobody is working in: every write in the real
+# project falls outside its owned paths, so it allows all of them and says
+# nothing. Measured 2026-07-26: a `scoped -> verdict` jump skipping `probing`
+# was permitted with exit 0.
+root="${CLAUDE_PROJECT_DIR:-$PWD}"
+if top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ]; then
+  root="$top"
+fi
+root="$(cd "$root" 2>/dev/null && pwd -P)" || root=""
+[ -n "$root" ] || deny "RULES COULD NOT BE LOADED: could not resolve the project root being worked in (CLAUDE_PROJECT_DIR/cwd)."
 
 # --- collaboration contract presence check ---------------------------------
 # The gate resolves exactly one root: this repo's own git root ($root,
