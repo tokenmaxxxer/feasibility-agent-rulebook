@@ -94,7 +94,16 @@ if not isinstance(ti, dict):
 # content-shape default-allow: the tool-agnostic default-deny below still
 # applies to every tool NOT in this fixed known-read-only set, including any
 # future/unknown tool name.
-if tool in ("Read", "Grep", "Glob", "LS"):
+#
+# `Skill` belongs in that set, and leaving it out made this plugin's own
+# skills unreachable: the Skill tool's payload carries a skill name and no
+# file path, so it fell through to the default-deny and was refused every
+# time. Measured 2026-07-27 on a real run of the sibling product rulebook,
+# which carries the same gate. A gate that blocks the rulebook from reading
+# its own rulebook is guarding nothing: invoking a skill loads instructions
+# into context and writes nothing, and every tool the skill then reaches for
+# arrives here on its own and is judged on its own.
+if tool in ("Read", "Grep", "Glob", "LS", "Skill"):
     allow()
 
 def plausible_root(d):
