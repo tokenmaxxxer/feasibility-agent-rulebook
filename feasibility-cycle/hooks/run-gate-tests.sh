@@ -2,6 +2,15 @@
 # Gate tests for state-gate.sh. Feeds hook JSON on stdin, asserts exit code
 # and (for denials) that a "DENIED" message appears on stderr. Exits non-zero
 # if any case fails.
+#
+# Cases (a)-(l) below run against THIS repo's own on-disk checkout (root
+# resolution walks up from the gate script's own location), so they depend
+# on this repo carrying its own docs/specs/role-handoff-contract.md. That
+# file now exists (see docs/proposals/2026-07-27-repo-local-contract-file.md),
+# so these cases exercise real transition-table logic instead of failing
+# uniformly on the contract-presence check. The fresh-repo cases (m)-(p)
+# below seed their own throwaway contract file inside a mocked repo and are
+# unaffected either way.
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
