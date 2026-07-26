@@ -599,6 +599,82 @@ EOF"
   check "(t4-$tname) normal non-scope-approved write via $tname still passes" allow "$code_t4"
 done
 
+# === deny-on-ambiguity (docs/proposals/2026-07-26-scope-record-gate-deny-on-ambiguity.md)
+# Terminal fix: (a) hooks.json routes scope-record-gate.sh via a catch-all
+# matcher so no tool name escapes it; (b) a Bash write whose captured
+# front-record target/content contains any shell expansion marker is refused
+# rather than judged by its unexpanded literal text.
+
+# --- (u0) hooks.json routes scope-record-gate.sh via a catch-all matcher ---
+hooks_json="$script_dir/hooks.json"
+if python3 -c '
+import json, re, sys
+data = json.load(open(sys.argv[1]))
+ok = False
+for entry in data["hooks"]["PreToolUse"]:
+    names = [h.get("command", "") for h in entry.get("hooks", [])]
+    if any("scope-record-gate.sh" in n for n in names):
+        matcher = entry.get("matcher", "")
+        if re.fullmatch(matcher, "apply_patch") and re.fullmatch(matcher, "SomeBrandNewTool"):
+            ok = True
+sys.exit(0 if ok else 1)
+' "$hooks_json"; then
+  pass=$((pass+1)); echo "PASS: (u0) hooks.json routes scope-record-gate.sh via a catch-all matcher (matches unenumerated tool names)"
+else
+  fail=$((fail+1)); echo "FAIL: (u0) hooks.json does NOT route scope-record-gate.sh via a catch-all matcher"
+fi
+
+# --- (u1) the \$VAR-heredoc bypass is now REFUSED --------------------------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+bash_u1_cmd="STATE=scope-approved; cat > $record_path <<EOF
+---
+status: \$STATE
+---
+EOF"
+payload_u1="$(json_bash "$bash_u1_cmd")"
+code_u1="$(run_scope_gate "$payload_u1")"
+check "(u1) \$VAR-heredoc scope-approved bypass is now refused" deny "$code_u1"
+if grep -q '^status: scope-proposed$' "$work/$record_path"; then
+  pass=$((pass + 1)); echo "PASS: (u1b) front record on disk is still scope-proposed after the refused \$VAR-heredoc write"
+else
+  fail=$((fail + 1)); echo "FAIL: (u1b) front record on disk unexpectedly changed despite the refusal"
+fi
+
+# --- (u2) catch-all-matched unknown-named tool, tokenless scope-approved -> REFUSED
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_u2="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"apply_patch","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+code_u2="$(run_scope_gate "$payload_u2")"
+check "(u2) catch-all-matched unknown tool name, tokenless scope-approved, is refused" deny "$code_u2"
+
+# --- (u3) provably-literal non-scope Bash write still PASSES ---------------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+bash_u3_cmd="cat > $record_path <<'EOF'
+---
+status: scope-proposed
+note: still gathering evidence
+---
+EOF"
+payload_u3="$(json_bash "$bash_u3_cmd")"
+code_u3="$(run_scope_gate "$payload_u3")"
+check "(u3) provably-literal non-scope-approved Bash write still passes" allow "$code_u3"
+
+# --- (u4) properly-tokened scope-approved transition still PASSES ----------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+mint_token_feas "gate-test-subject"
+bash_u4_cmd="cat > $record_path <<'EOF'
+---
+status: scope-approved
+---
+body
+EOF"
+payload_u4="$(json_bash "$bash_u4_cmd")"
+code_u4="$(run_scope_gate "$payload_u4")"
+check "(u4) properly-tokened scope-approved transition still passes" allow "$code_u4"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

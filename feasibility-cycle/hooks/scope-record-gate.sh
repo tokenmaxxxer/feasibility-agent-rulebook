@@ -169,15 +169,32 @@ if tool == "Bash":
     HEREDOC_HEADER_RE = re.compile(
         r"(?m)^([^\n]*<<-?\s*(['\"]?)(\w+)\2[^\n]*)\n(.*?)\n[ \t]*\3\b", re.S)
     HEREDOC_TARGET_RE = re.compile(r'(?:^|[\s;&|])\d?>{1,2}(?!\&)\s*([^\s;&|<>]+)')
+    # Deny-on-ambiguity (docs/proposals/2026-07-26-scope-record-gate-deny-on-ambiguity.md):
+    # an UNQUOTED heredoc marker (`<<EOF`, not `<<'EOF'`/`<<"EOF"`) means the
+    # real shell performs parameter/command expansion on the body before it
+    # is written to disk. If that body contains ANY expansion marker ($,
+    # backtick, $(...), ${...}), this gate cannot prove the unexpanded text
+    # it sees is what actually lands on disk — a `$VAR` could resolve to
+    # `scope-approved` at runtime. Such a body is never treated as a literal;
+    # a heredoc write whose literal target reaches (or, if unresolvable,
+    # might reach) the front record with a non-provable body is refused.
+    # A QUOTED heredoc marker disables shell expansion entirely, so its body
+    # is still provably literal even if it happens to contain a `$`.
+    SHELL_EXPANSION_RE = re.compile(r'\$|`')
+    ambiguous_tree_hit = False
     for hm in HEREDOC_HEADER_RE.finditer(command):
-        header, content = hm.group(1), hm.group(4)
+        header, quote, content = hm.group(1), hm.group(2), hm.group(4)
         tm = HEREDOC_TARGET_RE.search(header)
         cand = literal_target_or_none(tm.group(1)) if tm else None
         rel = repo_rel(cand) if cand else None
         m = FRONT_RECORD_RE.match(rel) if rel else None
-        if m:
-            determined.append((m.group(1), posixpath.join(root, rel), content))
-            determined_rels.add(rel)
+        if not m:
+            continue
+        if quote == "" and SHELL_EXPANSION_RE.search(content):
+            ambiguous_tree_hit = True
+            continue
+        determined.append((m.group(1), posixpath.join(root, rel), content))
+        determined_rels.add(rel)
 
     WT_CONTENT_RE = re.compile(
         r"(['\"])([^'\"]*)\1\s*\)\s*\.\s*write_(?:text|bytes)\s*\(\s*"
@@ -211,7 +228,6 @@ if tool == "Bash":
         re.compile(r'\binstall\b\s+.*?([^\s;&|<>]+)\s*(?:[;&|\n]|$)'),
     ]
     any_write_op = bool(HEREDOC_HEADER_RE.search(command)) or bool(WT_CONTENT_RE.search(command)) or bool(OPEN_CONTENT_RE.search(command))
-    ambiguous_tree_hit = False
     for rgx in OTHER_WRITE_RES:
         for m in rgx.finditer(command):
             any_write_op = True
