@@ -78,11 +78,14 @@ if [ ! -f "$root/$contract_rel" ]; then
   deny "this repo has no collaboration contract yet ($contract_rel not found under $root)."
 fi
 
-plugin_root="${CLAUDE_PLUGIN_ROOT:-}"
-if [ -z "$plugin_root" ]; then
-  plugin_root="$(cd "$script_dir/.." 2>/dev/null && pwd -P)"
-fi
-rules_file="$plugin_root/hooks/transition-rules.md"
+# transition-rules.md is resolved REPO-LOCALLY, anchored to this hook
+# script's own on-disk directory (which lives inside $root, already
+# resolved above by walking up to the nearest .git) — never via
+# CLAUDE_PLUGIN_ROOT or any plugin-install-layout assumption. A guarded
+# repo that vendors/checks out this rulebook at its own repo root must
+# find transition-rules.md sitting next to state-gate.sh regardless of
+# whether CLAUDE_PLUGIN_ROOT is set, unset, or points somewhere unrelated.
+rules_file="$script_dir/transition-rules.md"
 
 payload="$(cat 2>/dev/null || true)"
 [ -n "$payload" ] || deny "RULES COULD NOT BE LOADED: no tool-input payload was received."
@@ -319,12 +322,12 @@ if new_status not in known_states:
 # existence alone, as a boolean, and NEVER by comparing a parsed status
 # value against the "(none)" string. Only a genuinely absent file yields the
 # synthetic "(none)" old status used for bootstrap-row matching.
-file_exists = os.path.exists(record_abs)
+file_exists = os.path.exists(target_path)
 if not file_exists:
     old_status = "(none)"
 else:
     try:
-        with open(record_abs, encoding="utf-8-sig") as fh:
+        with open(target_path, encoding="utf-8-sig") as fh:
             old_text = fh.read(1 << 20)
     except OSError:
         deny("RULES COULD NOT BE LOADED: existing feasibility-record.md could not be read to determine the current state.")
