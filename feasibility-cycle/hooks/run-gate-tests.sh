@@ -2,6 +2,15 @@
 # Gate tests for state-gate.sh. Feeds hook JSON on stdin, asserts exit code
 # and (for denials) that a "DENIED" message appears on stderr. Exits non-zero
 # if any case fails.
+#
+# Cases (a)-(l) below run against THIS repo's own on-disk checkout (root
+# resolution walks up from the gate script's own location), so they depend
+# on this repo carrying its own docs/specs/role-handoff-contract.md. That
+# file now exists (see docs/proposals/2026-07-27-repo-local-contract-file.md),
+# so these cases exercise real transition-table logic instead of failing
+# uniformly on the contract-presence check. The fresh-repo cases (m)-(p)
+# below seed their own throwaway contract file inside a mocked repo and are
+# unaffected either way.
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -186,6 +195,86 @@ else
   echo "FAIL: (l) invocation from outside the repo (exit $code_out) diverged from invocation from inside it (exit $code_in) — outside: $out_out | inside: $out_in"
   fail=$((fail+1))
 fi
+
+# --- fresh-repo subject-scoped ownership + repo-local resolution cases ----
+# state-gate.sh anchors its root by walking UP from ITS OWN on-disk location
+# to the nearest enclosing .git — so to exercise it against a genuinely
+# fresh/foreign repo (not this rulebook checkout), the gate script and
+# transition-rules.md must themselves be copied into that fresh repo's own
+# feasibility-cycle/hooks/ layout and invoked from there. This is also what
+# proves the CLAUDE_PLUGIN_ROOT-independent fix: these cases run WITHOUT
+# CLAUDE_PLUGIN_ROOT set at all (unset, not just empty), and without it
+# pointing anywhere near the fresh repo.
+new_fresh_repo() {
+  cleanup
+  work="$(mktemp -d)"
+  git -C "$work" init -q
+  mkdir -p "$work/docs/specs" "$work/feasibility-cycle/hooks"
+  printf 'placeholder collaboration contract for gate tests\n' \
+    > "$work/docs/specs/role-handoff-contract.md"
+  cp "$gate" "$work/feasibility-cycle/hooks/state-gate.sh"
+  cp "$script_dir/transition-rules.md" "$work/feasibility-cycle/hooks/transition-rules.md"
+}
+
+run_fresh_gate() {
+  # $1 = json payload; runs the COPY of the gate that now lives inside the
+  # fresh repo, with CLAUDE_PLUGIN_ROOT deliberately unset and
+  # CLAUDE_PROJECT_DIR unset, so nothing but the script's own on-disk
+  # location (inside the fresh repo) can supply the root/rules resolution.
+  env -u CLAUDE_PLUGIN_ROOT -u CLAUDE_PROJECT_DIR \
+    bash "$work/feasibility-cycle/hooks/state-gate.sh" \
+    <<<"$1" >"$work/stdout" 2>"$work/stderr"
+  echo $?
+}
+
+# (m) fresh repo, subject-scoped feasibility record, (none) -> idle bootstrap
+# write to docs/reports/records/<subject>/feasibility.md -> ALLOW, and the
+# gate must NOT fail with "rules could not be loaded" (proves repo-local
+# transition-rules.md resolution works with CLAUDE_PLUGIN_ROOT unset).
+new_fresh_repo
+subject_path="docs/reports/records/widget-x/feasibility.md"
+payload="$(json_write "$work/$subject_path" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_fresh_gate "$payload")"
+check "(m) fresh repo, subject-scoped feasibility.md, (none) -> idle -> allow" allow "$code"
+grep -qi "rules could not be loaded" "$work/stderr" && {
+  echo "FAIL: (m) gate reported rules could not be loaded despite repo-local transition-rules.md being present"
+  fail=$((fail+1))
+}
+
+# (n) fresh repo, same subject, a legal in-subject transition
+# scoped -> probing -> ALLOW, still no CLAUDE_PLUGIN_ROOT.
+new_fresh_repo
+subject_path="docs/reports/records/widget-x/feasibility.md"
+mkdir -p "$(dirname "$work/$subject_path")"
+printf -- '---\nstatus: scoped\n---\nbody\n' > "$work/$subject_path"
+payload="$(json_write "$work/$subject_path" $'---\nstatus: probing\n---\nbody\n')"
+code="$(run_fresh_gate "$payload")"
+check "(n) fresh repo, subject-scoped feasibility.md, scoped -> probing -> allow" allow "$code"
+
+# (o) fresh repo, foreign-role write under the SAME subject
+# (docs/reports/records/<subject>/coding.md) does not match feasibility's
+# owned-path shape at all -> the gate has nothing to enforce and lets it
+# through unjudged (§11: a role's gate only ever governs its OWN
+# <role>.md under a subject, never a sibling role's file) -- this is the
+# REFUSE-shaped case in spirit (the write is not feasibility's to police)
+# and must not be confused with an ALLOW verdict on a feasibility
+# transition: no transition-table judgement occurs at all here.
+new_fresh_repo
+foreign_path="docs/reports/records/widget-x/coding.md"
+mkdir -p "$(dirname "$work/$foreign_path")"
+payload="$(json_write "$work/$foreign_path" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_fresh_gate "$payload")"
+check "(o) fresh repo, foreign-role coding.md under same subject -> allow (not feasibility-owned, ungated)" allow "$code"
+
+# (p) fresh repo, feasibility spike record under a subject -> ALLOW
+# (docs/reports/records/<subject>/spikes/<slug>.md), proving the owned-path
+# regex's second shape still resolves against the repo-local root.
+new_fresh_repo
+spike_path="docs/reports/records/widget-x/spikes/probe-one.md"
+mkdir -p "$(dirname "$work/$spike_path")"
+payload="$(json_write "$work/$spike_path" $'---\nstatus: idle\n---\nbody\n')"
+code="$(run_fresh_gate "$payload")"
+check "(p) fresh repo, subject-scoped spikes/<slug>.md, (none) -> idle -> allow" allow "$code"
 
 echo
 echo "== $pass passed, $fail failed =="
