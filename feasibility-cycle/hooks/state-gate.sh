@@ -159,12 +159,34 @@ if tool == "Bash":
         r'>>?(?!\()'
         r'|\btee\b'
         r'|\b(cp|mv|dd|install)\b'
-        r'|\b(sed|perl|ruby)\b[^|;\n]*-i[a-zA-Z0-9]*\b',
+        r'|\b(sed|perl|ruby)\b[^|;\n]*-i[a-zA-Z0-9]*\b'
+        # write-through-another-tool: e.g. `python3 -c "open(path,
+        # 'w').write(...)"`. Judged by RESOLVED TARGET PATH like every
+        # other idiom above, not by which tool performs the write.
+        r'|\bopen\s*\([^)]*,\s*[\'"][wxa]',
         re.I,
     )
+    # Matches ONLY when open()'s first argument is a single, complete
+    # quoted literal immediately followed by the comma — never a partial
+    # match into the middle of a concatenation expression (e.g.
+    # `'docs/reports/records/' + subject + '/feasibility.md'` must NOT
+    # yield a truncated literal capture; it must be treated as dynamic).
+    OPEN_LITERAL_RE = re.compile(
+        r"\bopen\s*\(\s*['\"]([^'\"]*)['\"]\s*,\s*['\"][wxa]"
+    )
+    # Loose detector: is this an open(...) write call AT ALL, literal or
+    # not? Used only to decide whether the call is write-shaped.
+    OPEN_WRITE_RE = re.compile(r"\bopen\s*\([^)]*,\s*['\"][wxa][^'\"]*['\"]")
 
     could_write = write_shape.search(command) is not None
     is_dynamic = dynamic_construct.search(command) is not None
+
+    # A python-style open(...) write call whose first argument is not a
+    # simple, complete literal string (e.g. built from concatenation or a
+    # variable) is a write with an indeterminate target — treated the same
+    # as any other unresolvable-target write below.
+    if not is_dynamic and OPEN_WRITE_RE.search(command) and not OPEN_LITERAL_RE.search(command):
+        is_dynamic = True
 
     if could_write and is_dynamic:
         # Target not statically determinable AND write-shaped: treat as
@@ -202,6 +224,9 @@ if tool == "Bash":
                 continue
             if "/" in t or t.endswith(".md"):
                 candidates.append(t)
+        for _om in OPEN_LITERAL_RE.finditer(command):
+            if _om.group(1):
+                candidates.append(_om.group(1))
         for cand in candidates:
             normalized = cand.replace("\\", "/")
             absolute = posixpath.normpath(

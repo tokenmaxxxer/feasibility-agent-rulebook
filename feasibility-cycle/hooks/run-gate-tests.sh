@@ -283,6 +283,51 @@ payload="$(json_write "$work/$spike_path" $'---\nstatus: idle\n---\nbody\n')"
 code="$(run_fresh_gate "$payload")"
 check "(p) fresh repo, subject-scoped spikes/<slug>.md, (none) -> idle -> allow" allow "$code"
 
+# --- (q) write-detection bypass fix (docs/proposals/2026-07-26-fix-state-gate-writeop-bypass.md)
+# write-through-another-tool (python3's open()) previously matched none of
+# write_shape's idioms, so a write reaching an owned record path via
+# `python3 -c "open(path,'w').write(...)"` fell through this gate's
+# could_write check entirely and was allowed unjudged. Fixed by adding an
+# open()-write detector to write_shape/OPEN_LITERAL_RE.
+
+# (q1) fresh repo: Bash python3-open write reaching feasibility's OWN
+# owned record path must now be caught and refused, exactly like the
+# already-covered `>`/`tee`/`cp` idioms are (this gate denies ANY
+# Bash-mediated write reaching an owned record path outright, since it
+# cannot verify the resulting content before the shell runs it).
+new_fresh_repo
+subject_path="docs/reports/records/widget-x/feasibility.md"
+mkdir -p "$(dirname "$work/$subject_path")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path"
+payload_q1=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"open('$subject_path','w').write('x')\""}}
+JSON
+)
+code_q1="$(run_fresh_gate "$payload_q1")"
+check "(q1) fresh repo, Bash python3-open write to feasibility's own record is refused" deny "$code_q1"
+
+# (q2) fresh repo: Bash python3-open write to a path clearly OUTSIDE the
+# owned record tree remains ungated (proves the fix does not over-deny).
+new_fresh_repo
+payload_q2=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"open('/tmp/unrelated-scratch-file.md','w').write('x')\""}}
+JSON
+)
+code_q2="$(run_fresh_gate "$payload_q2")"
+check "(q2) fresh repo, Bash python3-open write outside the owned record tree stays ungated (allow)" allow "$code_q2"
+
+# (q3) fresh repo: Bash python3-open write whose target path is built from
+# concatenation (not a clean literal), in a command that names the owned
+# record tree, must be default-denied — the gate cannot prove the
+# indeterminate target lands outside docs/reports/records/.
+new_fresh_repo
+payload_q3=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import sys; open('docs/reports/records/' + sys.argv[1] + '/feasibility.md','w').write('x')\" widget-x"}}
+JSON
+)
+code_q3="$(run_fresh_gate "$payload_q3")"
+check "(q3) fresh repo, Bash python3-open write with indeterminate target in the owned record tree is refused" deny "$code_q3"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
