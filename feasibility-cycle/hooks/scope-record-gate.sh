@@ -69,6 +69,19 @@ if not isinstance(tool, str) or not tool:
 if not isinstance(ti, dict):
     deny("tool_input missing or malformed in payload.")
 
+# Read-only-tool passthrough (docs/proposals/2026-07-26-scope-record-gate-deny-on-ambiguity.md
+# regression fix): this gate only governs transitions that MUTATE the front
+# record's status to scope-approved. A tool that cannot write at all — Read,
+# Grep, Glob, LS, or any other tool whose payload carries no content/write
+# intent — is never a scope-approved transition, so it is never this gate's
+# concern regardless of which path (e.g. the catch-all `.*` PreToolUse
+# matcher) routed it here. This is a tool-identity passthrough, not a
+# content-shape default-allow: the tool-agnostic default-deny below still
+# applies to every tool NOT in this fixed known-read-only set, including any
+# future/unknown tool name.
+if tool in ("Read", "Grep", "Glob", "LS"):
+    allow()
+
 def plausible_root(d):
     return bool(d) and os.path.isdir(d) and (os.path.exists(os.path.join(d, ".git"))
         or os.path.isfile(os.path.join(d, "docs/specs/role-handoff-contract.md")))

@@ -675,6 +675,53 @@ payload_u4="$(json_bash "$bash_u4_cmd")"
 code_u4="$(run_scope_gate "$payload_u4")"
 check "(u4) properly-tokened scope-approved transition still passes" allow "$code_u4"
 
+# === read-only-tool passthrough regression fix
+# (docs/proposals/2026-07-26-scope-record-gate-deny-on-ambiguity.md): the
+# catch-all `.*` matcher (see hooks.json) routes every tool, including
+# read-only ones, into scope-record-gate.sh. The tool-agnostic default-deny
+# then refused Read/Grep/Glob/LS on the front record because their payload
+# has no content field — wrongly blocking reads. These tools must PASS
+# untouched regardless of payload shape or on-disk state.
+
+# --- (v1) Read of the front-record path PASSES ------------------------------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_v1="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"Read","tool_input":{"file_path":sys.argv[1]}}))' "$work/$record_path")"
+code_v1="$(run_scope_gate "$payload_v1")"
+check "(v1) Read of the front-record path passes" allow "$code_v1"
+
+# --- (v2) Grep over the front-record tree PASSES ----------------------------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_v2="$(python3 -c 'import json;print(json.dumps({"tool_name":"Grep","tool_input":{"pattern":"status","path":"docs/reports/records"}}))')"
+code_v2="$(run_scope_gate "$payload_v2")"
+check "(v2) Grep over the front-record tree passes" allow "$code_v2"
+
+# --- (v3) Glob over the front-record tree PASSES ----------------------------
+new_work
+payload_v3="$(python3 -c 'import json;print(json.dumps({"tool_name":"Glob","tool_input":{"pattern":"docs/reports/records/**/feasibility.md"}}))')"
+code_v3="$(run_scope_gate "$payload_v3")"
+check "(v3) Glob over the front-record tree passes" allow "$code_v3"
+
+# --- (v4) previously-refused write bypasses STILL refuse (guard against ----
+#     over-widening the passthrough to write-shaped tools) ------------------
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+bash_v4_cmd="STATE=scope-approved; cat > $record_path <<EOF
+---
+status: \$STATE
+---
+EOF"
+payload_v4="$(json_bash "$bash_v4_cmd")"
+code_v4="$(run_scope_gate "$payload_v4")"
+check "(v4a) \$VAR-heredoc bypass is still refused after the read-only passthrough fix" deny "$code_v4"
+
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_v4b="$(python3 -c 'import json,sys;print(json.dumps({"tool_name":"apply_patch","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$work/$record_path" $'---\nstatus: scope-approved\n---\nbody\n')"
+code_v4b="$(run_scope_gate "$payload_v4b")"
+check "(v4b) unknown-named WRITE tool, tokenless scope-approved, is still refused" deny "$code_v4b"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]
