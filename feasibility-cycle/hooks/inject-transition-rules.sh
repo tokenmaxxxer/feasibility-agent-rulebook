@@ -14,21 +14,23 @@ set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P)"
 
-# Root is discovered by walking UP from the hook's own on-disk location to
-# the nearest enclosing `.git`, never from the process cwd or
-# CLAUDE_PROJECT_DIR — this must resolve to the same state file that
-# state-gate.sh guards, regardless of invoking cwd.
-root=""
-dir="$script_dir"
-while :; do
-  if [ -e "$dir/.git" ]; then
-    root="$dir"
-    break
-  fi
-  parent="$(dirname "$dir")"
-  [ "$parent" = "$dir" ] && break
-  dir="$parent"
-done
+# Root is the repository being worked in: CLAUDE_PROJECT_DIR when the harness
+# sets it, otherwise the process cwd, anchored on that directory's git root.
+# This must agree with state-gate.sh, which resolves the same way — the two
+# hooks read and guard the same state file, and a divergence between them is
+# worse than either being wrong alone: the injector would report one repo's
+# state while the gate judged another's.
+#
+# It is deliberately NOT the nearest `.git` above this hook's own location.
+# That coincides with the project only while the rulebook is vendored into it;
+# loaded as a plugin from its own checkout it resolves to the RULEBOOK's repo,
+# and the injector then reports `(none)` forever because the state file it
+# looks for does not exist there.
+root="${CLAUDE_PROJECT_DIR:-$PWD}"
+if top="$(git -C "$root" rev-parse --show-toplevel 2>/dev/null)" && [ -n "$top" ]; then
+  root="$top"
+fi
+root="$(cd "$root" 2>/dev/null && pwd -P)" || root=""
 if [ -z "$root" ]; then
   echo "feasibility-cycle: state-machine context"
   echo "========================================="
