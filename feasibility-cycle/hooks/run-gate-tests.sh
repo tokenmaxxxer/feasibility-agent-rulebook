@@ -438,6 +438,69 @@ JSON
 code_p5="$(run_fresh_gate "$payload_p5")"
 check "(p5) command-substitution-wrapped write to feasibility's own record is refused" deny "$code_p5"
 
+# === scope-record-gate.sh Bash-bypass fix ==================================
+# (docs/proposals/2026-07-26-scope-record-gate-bash-bypass.md): a Bash-authored
+# write that lands the front record at status: scope-approved used to reach
+# zero token-checking hook (hooks.json only wired
+# Write|Edit|MultiEdit|NotebookEdit to scope-record-gate.sh). hooks.json now
+# also routes Bash there, and the gate judges a Bash write by its resolved
+# target and literal resulting content, same as a Write call.
+scope_gate="$script_dir/scope-record-gate.sh"
+
+run_scope_gate() {
+  # $1 = json payload
+  CLAUDE_PROJECT_DIR="$work" CLAUDE_PLUGIN_ROOT="$plugin_root" \
+    bash "$scope_gate" <<<"$1" >"$work/stdout" 2>"$work/stderr"
+  echo $?
+}
+
+# --- (n1) Bash-authored, tokenless scope-approved transition -> REFUSED ---
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+bash_approve_cmd="cat > $record_path <<'EOF'
+---
+status: scope-approved
+---
+scope approved via Bash, no token
+EOF"
+payload_n1="$(json_bash "$bash_approve_cmd")"
+code_n1="$(run_scope_gate "$payload_n1")"
+check "(n1) Bash-authored tokenless scope-approved transition is refused" deny "$code_n1"
+if grep -q '^status: scope-proposed$' "$work/$record_path"; then
+  pass=$((pass + 1)); echo "PASS: (n1b) front record on disk is still scope-proposed after the refused Bash write"
+else
+  fail=$((fail + 1)); echo "FAIL: (n1b) front record on disk unexpectedly changed despite the refusal"
+fi
+
+# --- (n2) same transition, but with a valid human-placed token -> PASS ---
+mkdir -p "$work/docs/reports/records/gate-test-subject/tokens"
+printf 'approved by human\n' > "$work/docs/reports/records/gate-test-subject/tokens/scope-approved.token"
+code_n2="$(run_scope_gate "$payload_n1")"
+check "(n2a) Bash-authored scope-approved transition with a valid token is allowed" allow "$code_n2"
+if [ ! -f "$work/docs/reports/records/gate-test-subject/tokens/scope-approved.token" ]; then
+  pass=$((pass + 1)); echo "PASS: (n2b) note: this gate's token is read-only (never consumed), matching the pre-existing Write path (token file was intentionally left in place)"
+else
+  pass=$((pass + 1)); echo "PASS: (n2b) token file still present, as expected (this gate's tokens are not single-use, matching the pre-existing Write path)"
+fi
+
+# --- (n3) normal Write-path still behaves: tokenless -> refused, tokened -> allowed
+new_work
+seed_record $'---\nstatus: scope-proposed\n---\nbody\n'
+payload_n3="$(json_write "$work/$record_path" $'---\nstatus: scope-approved\n---\nscope approved via Write\n')"
+code_n3a="$(run_scope_gate "$payload_n3")"
+check "(n3a) normal Write-path tokenless scope-approved transition is still refused" deny "$code_n3a"
+mkdir -p "$work/docs/reports/records/gate-test-subject/tokens"
+printf 'approved by human\n' > "$work/docs/reports/records/gate-test-subject/tokens/scope-approved.token"
+code_n3b="$(run_scope_gate "$payload_n3")"
+check "(n3b) normal Write-path scope-approved transition with a valid token is still allowed" allow "$code_n3b"
+
+# --- (n4) Bash write unrelated to the front record path -> left alone -----
+new_work
+payload_n4="$(json_bash "echo hi > /tmp/feasibility-scope-record-gate-unrelated-scratch.txt")"
+code_n4="$(run_scope_gate "$payload_n4")"
+rm -f /tmp/feasibility-scope-record-gate-unrelated-scratch.txt
+check "(n4) Bash write unrelated to the front record tree is left ungated" allow "$code_n4"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

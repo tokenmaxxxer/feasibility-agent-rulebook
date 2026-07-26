@@ -73,6 +73,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/trailer-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scope-record-gate.sh"
+          }
+        ]
       }
     ]
   }
