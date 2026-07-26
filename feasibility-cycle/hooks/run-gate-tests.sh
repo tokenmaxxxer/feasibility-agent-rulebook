@@ -328,6 +328,64 @@ JSON
 code_q3="$(run_fresh_gate "$payload_q3")"
 check "(q3) fresh repo, Bash python3-open write with indeterminate target in the owned record tree is refused" deny "$code_q3"
 
+# --- path-reference default-deny (docs/proposals/2026-07-26-gate-nested-shell-default-deny.md)
+# Each of these targets feasibility's OWN owned record path via a write
+# idiom this gate never enumerated by name (write_text/write_bytes/
+# os.write) or via a nested shell / command substitution wrapper around a
+# plain write. The rule is not "match this idiom" — it is "default-deny
+# any reference into the owned record tree this gate cannot prove is
+# read-only" — so all five must be refused regardless of idiom.
+new_fresh_repo
+subject_path_p="docs/reports/records/widget-x/feasibility.md"
+mkdir -p "$(dirname "$work/$subject_path_p")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path_p"
+payload_p1=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import pathlib; pathlib.Path('$subject_path_p').write_text('x')\""}}
+JSON
+)
+code_p1="$(run_fresh_gate "$payload_p1")"
+check "(p1) Bash pathlib.Path(...).write_text(...) write to feasibility's own record is refused" deny "$code_p1"
+
+new_fresh_repo
+mkdir -p "$(dirname "$work/$subject_path_p")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path_p"
+payload_p2=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import pathlib; pathlib.Path('$subject_path_p').write_bytes(b'x')\""}}
+JSON
+)
+code_p2="$(run_fresh_gate "$payload_p2")"
+check "(p2) Bash pathlib.Path(...).write_bytes(...) write to feasibility's own record is refused" deny "$code_p2"
+
+new_fresh_repo
+mkdir -p "$(dirname "$work/$subject_path_p")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path_p"
+payload_p3=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"python3 -c \"import os; fd = os.open('$subject_path_p', os.O_WRONLY); os.write(fd, b'x')\""}}
+JSON
+)
+code_p3="$(run_fresh_gate "$payload_p3")"
+check "(p3) Bash os.write(...) write to feasibility's own record is refused" deny "$code_p3"
+
+new_fresh_repo
+mkdir -p "$(dirname "$work/$subject_path_p")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path_p"
+payload_p4=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"sh -c \"echo x > $subject_path_p\""}}
+JSON
+)
+code_p4="$(run_fresh_gate "$payload_p4")"
+check "(p4) sh -c-wrapped write to feasibility's own record is refused" deny "$code_p4"
+
+new_fresh_repo
+mkdir -p "$(dirname "$work/$subject_path_p")"
+printf -- '---\nstatus: idle\n---\nbody\n' > "$work/$subject_path_p"
+payload_p5=$(cat <<JSON
+{"tool_name":"Bash","tool_input":{"command":"echo x > \$(echo $subject_path_p)"}}
+JSON
+)
+code_p5="$(run_fresh_gate "$payload_p5")"
+check "(p5) command-substitution-wrapped write to feasibility's own record is refused" deny "$code_p5"
+
 echo
 echo "== $pass passed, $fail failed =="
 [ "$fail" -eq 0 ]

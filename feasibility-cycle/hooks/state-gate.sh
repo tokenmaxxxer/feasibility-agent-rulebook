@@ -152,6 +152,77 @@ if tool == "Bash":
     if not isinstance(command, str) or not command.strip():
         deny("RULES COULD NOT BE LOADED: Bash tool_input.command missing or empty.")
 
+    # --- path-reference default-deny (frozen contract) ---------------------
+    # docs/proposals/2026-07-26-gate-nested-shell-default-deny.md: default-
+    # deny whenever the command TEXT references a feasibility-owned record
+    # path (docs/reports/records/<subject>/feasibility.md or
+    # .../spikes/<slug>.md) unless the reference is PROVABLY READ-ONLY: only
+    # read-type commands touch it, no nested-shell invocation (sh -c/
+    # bash -c/eval/env ... sh/xargs), no command substitution ($( )/
+    # backticks), and no write idiom anywhere in the command. This does not
+    # depend on enumerating write idioms — failing the read-only proof is
+    # itself the denial trigger, so write_text/write_bytes/os.write and any
+    # future un-enumerated idiom are caught the same way. Unlike the other
+    # role gates, this gate has NO own-record exemption here: per this
+    # gate's pre-existing policy (see the (q1)/could_write section below),
+    # EVERY Bash-mediated write reaching an owned record path — own or
+    # foreign — is refused outright, since Bash content can never be
+    # verified against transition-rules.md before the shell runs it.
+    _PRDD_TREE_RE = re.compile(r'docs/reports/records/[^\s"\'`)]*(?:feasibility\.md|spikes/[^\s"\'`)]*\.md)')
+    _PRDD_NESTED_SHELL_RE = re.compile(
+        r'\b(?:sh|bash|zsh|ksh|dash)\s+-c\b|\beval\b|\bxargs\b|'
+        r'\benv\b[^\n;&|]*\b(?:sh|bash|zsh|ksh|dash)\b'
+    )
+    _PRDD_CMD_SUBST_RE = re.compile(r'\$\(|`')
+    _PRDD_WRITE_IDIOM_RE = re.compile(
+        r'(?:^|[\s;&|])\d?>{1,2}(?!\&)|\btee\b|\bdd\b[^\n;&|]*\bof=|'
+        r'\bopen\s*\([^)]*,\s*[\'"][wxa]|'
+        r'\.write_text\s*\(|\.write_bytes\s*\(|\.write\s*\(|\bos\.write\s*\('
+    )
+    _PRDD_OPEN_ANY_RE = re.compile(r"\bopen\s*\([^)]*,\s*['\"][wxa]")
+    _PRDD_OPEN_LITERAL_RE = re.compile(r"\bopen\s*\(\s*(['\"])(.*?)\1\s*,\s*(['\"])[wxa]")
+    _PRDD_WT_ANY_RE = re.compile(r"\.\s*write_(?:text|bytes)\s*\(")
+    _PRDD_WT_LITERAL_RE = re.compile(r"\(\s*(['\"])(.*?)\1\s*\)\s*\.\s*write_(?:text|bytes)\s*\(")
+    _PRDD_REDIRECT_RE = re.compile(r"(?:^|[\s;&|])\d?(>>|>\|?)(?!\&)\s*(\S+)")
+    _PRDD_READ_WHITELIST = {
+        "cat", "grep", "egrep", "fgrep", "head", "tail", "test", "[", "ls",
+        "wc", "find", "stat", "diff", "file", "less", "more", "readlink",
+        "realpath", "md5sum", "sha1sum", "sha256sum", "basename", "dirname",
+        "true", "echo", "pwd",
+    }
+
+    def _prdd_leading_tokens(cmd):
+        leads = []
+        for seg in re.split(r'[;&|\n]+', cmd):
+            toks = seg.split()
+            i = 0
+            while i < len(toks) and (
+                re.match(r'^[A-Za-z_][A-Za-z0-9_]*=', toks[i]) or toks[i] in ("sudo", "env")
+            ):
+                i += 1
+            if i < len(toks):
+                leads.append(posixpath.basename(toks[i].strip("'\"")))
+        return leads
+
+    if _PRDD_TREE_RE.search(command):
+        _prdd_proven_read_only = (
+            not _PRDD_NESTED_SHELL_RE.search(command)
+            and not _PRDD_CMD_SUBST_RE.search(command)
+            and not _PRDD_WRITE_IDIOM_RE.search(command)
+            and all(t in _PRDD_READ_WHITELIST for t in _prdd_leading_tokens(command))
+        )
+        if not _prdd_proven_read_only:
+            deny(
+                "path-reference default-deny: this Bash command references a "
+                "feasibility-owned record path and this gate could not prove the "
+                    "reference is read-only (no nested shell, no command substitution, no "
+                    "write idiom, only read-type commands touching the path). Per the frozen "
+                    "path-reference default-deny contract "
+                    "(docs/proposals/2026-07-26-gate-nested-shell-default-deny.md), an "
+                    "unproven reference into the owned record tree is refused rather than "
+                    "allowed through."
+                )
+
     dynamic_construct = re.compile(
         r'\$\{?\w|\$\(|`|\*|\?|~|\beval\b|\bsource\b|\.\s+/|<\(|>\(|<<'
     )
