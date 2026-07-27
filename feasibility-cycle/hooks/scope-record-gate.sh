@@ -136,9 +136,15 @@ def frontmatter_status(text):
 
 def require_token_and_check(root, subject):
     """Shared §19 enforcement for scope-proposed -> scope-approved, used
-    identically by the Write path and the Bash path below. Read-only check
-    (unlike product-cycle's single-use token, this repo's existing Write
-    path never consumed the token either — preserved as-is, not widened)."""
+    identically by the Write path and the Bash path below.
+
+    The token is CONSUMED here, matching product-cycle. It used to be a
+    read-only check, and the docstring said so — "this repo's existing Write
+    path never consumed the token either — preserved as-is, not widened". A
+    token that is never removed is a standing approval: measured 2026-07-27,
+    the same approving Write passed four times in a row with the token still
+    on disk afterward, so one human decision authorized every later
+    re-scoping of that subject for the life of the repository."""
     if not re.match(r"^[A-Za-z0-9_.-]{1,128}$", subject) or subject.startswith("-") or subject in (".", ".."):
         deny("subject '%s' has an unsafe name; refusing." % subject)
     token = posixpath.join(root, "docs/reports/records", subject, "tokens", "scope-approved.token")
@@ -157,6 +163,11 @@ def require_token_and_check(root, subject):
                  "required. Refusing per §19." % subject)
     except OSError:
         deny("approval token for subject '%s' could not be read; refusing per §19." % subject)
+    try:
+        os.remove(token_real)
+    except OSError:
+        deny("the approval token for subject '%s' could not be consumed (removed); refusing "
+             "rather than leaving a replayable token in place." % subject)
 
 cwd = os.environ.get("FEAS_CWD", "")
 cpd = os.environ.get("FEAS_CPD", "")

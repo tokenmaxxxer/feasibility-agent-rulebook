@@ -8,6 +8,14 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/inject-transition-rules.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scope-approval-token.sh"
+          }
+        ]
       }
     ],
     "PreToolUse": [
