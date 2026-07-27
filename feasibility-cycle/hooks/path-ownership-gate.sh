@@ -108,10 +108,20 @@ if leaf == "feasibility.md":
     allow()
 if re.match(r"^spikes/[^/]+\.md$", leaf):
     allow()
-# The subject's tokens/ dir is human-placed signal, not a role record; a
-# feasibility session placing its own approval token is not a §11 violation.
-if re.match(r"^tokens/[^/]+$", leaf):
-    allow()
+# The subject's tokens/ dir is human-placed signal. It used to be ALLOWED here
+# on the reasoning that "a feasibility session placing its own approval token
+# is not a §11 violation" — but §19 calls scope-approved "human-owned, never
+# self-certified", and the token is the only thing standing behind that claim.
+# Measured 2026-07-27: with this branch allowing, a single Write of
+# docs/reports/records/<subject>/tokens/scope-approved.token passed all five
+# gates, and the approving transition then passed too. The gate was satisfiable
+# only by self-approval, because no minting hook existed at all.
+# scope-approval-token.sh now mints it from the human's own turn; nothing the
+# agent does may write here.
+if re.match(r"^tokens/", leaf):
+    deny("tokens/ carries the human's scope approval and is written only by "
+         "scope-approval-token.sh from the user's own turn (contract §19). A "
+         "role may not place, edit, or delete its own approval token.")
 
 # Anything else under the subject dir is another role's exclusive path.
 owner = leaf.split("/")[0]
