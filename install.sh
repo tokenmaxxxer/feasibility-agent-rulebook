@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # One-shot installer for the feasibility-agent-rulebook stack.
 # Registers ONLY the tokenmaxxxer-feasibility marketplace and installs
-# ONLY this repository's plugins (feasibility-cycle) plus its bundle
-# (feasibility-agent-env), at user scope. Names no other repository or
+# ONLY this repository's plugins (feasibility) plus its bundle
+# (feasibility), at user scope. Names no other repository or
 # marketplace.
 set -euo pipefail
 
 MARKET="tokenmaxxxer-feasibility"
-BUNDLE="feasibility-agent-env"
+BUNDLE="feasibility"
 GITHUB_REPO="tokenmaxxxer/feasibility-agent-rulebook"
-PLUGINS=(feasibility-cycle)
+PLUGINS=(feasibility)
 
 usage() {
   cat <<'USAGE'
@@ -143,7 +143,7 @@ if [ -n "$CLI" ] && [ -x "$CLI" ]; then
     echo "    Re-run this script — it is idempotent — or install the failures"
     echo "    individually with: $CLI plugin install <name>@$MARKET --scope user"
   else
-    echo "==> installed $BUNDLE@$MARKET and feasibility-cycle."
+    echo "==> installed $BUNDLE@$MARKET and feasibility."
   fi
 else
   echo "==> no claude CLI found (standalone or bundled): writing user settings directly"
@@ -162,5 +162,5 @@ cat <<'MSG'
       There is no CLI/config switch for this toggle; it is a one-time
       interactive step.
     - without auto-update, refresh manually anytime:
-      claude plugin update feasibility-agent-env@tokenmaxxxer-feasibility
+      claude plugin update feasibility@tokenmaxxxer-feasibility
 MSG
