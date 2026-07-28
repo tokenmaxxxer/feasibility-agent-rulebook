@@ -1,0 +1,7 @@
+{
+  "name": "feasibility",
+  "description": "The feasibility role on contract v3: can it be built, may it be built \u2014 four probes (technical, prior_art, legal_regulatory, threat_model), each resolved with evidence before any verdict; spec read without the market argument; verdict go|no-go|conditional plus the measurement design. Ships skills: spike-report, stride-table, license-scan, build-vs-buy, reversibility-tag.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

@@ -1,8 +1,0 @@
-{
-  "name": "feasibility-cycle",
-  "version": "0.1.0",
-  "description": "State machine and gates for the feasibility role: idle -> scoped -> probing -> verdict, with a gated probing -> verdict transition refused while any of the four probes (technical, prior art, legal/regulatory, threat model) is unresolved.",
-  "author": {
-    "name": "Jung Jiwon & Lee Jongkwan"
-  }
-}

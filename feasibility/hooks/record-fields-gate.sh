@@ -3,7 +3,7 @@ __fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate
 trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit|NotebookEdit): §20 minimum-content.
 # Peer to state-gate.sh on feasibility's owned record paths
-# (docs/reports/records/<subject>/feasibility.md and
+# (docs/issue-<n>/reports/feasibility.md and
 # .../spikes/<slug>.md). state-gate.sh validates the status transition; THIS
 # gate validates §20's minimum content on the SAME proposed Write content:
 # every role record must state what was done, why, and the concrete upstream
@@ -93,7 +93,7 @@ try:
     rel = posixpath.relpath(resolved, root).replace("\\","/")
 except ValueError:
     allow()
-if not re.match(r"^docs/reports/records/[^/]+/(feasibility\.md|spikes/[^/]+\.md)$", rel):
+if not re.match(r"^docs/issue-[0-9]+/reports/(feasibility\.md|spikes/[^/]+\.md)$", rel):
     allow()  # not a feasibility-owned record path; nothing to gate
 
 # Only a complete Write can be judged; an Edit is a partial diff -> fail closed.

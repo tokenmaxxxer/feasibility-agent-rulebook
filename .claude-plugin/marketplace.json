@@ -5,14 +5,9 @@
   },
   "plugins": [
     {
-      "name": "feasibility-cycle",
-      "source": "./feasibility-cycle",
-      "description": "Feasibility role cycle: takes a specification only (deliberately without the market argument), runs four sequential probes (technical, prior art, legal/regulatory, threat model), and gates entry into a verdict on all four being resolved. A UserPromptSubmit hook mints an approval token only from the user's own turn; a PreToolUse hook gates the state file's transitions against the token and the probe fields, evaluated on the target path regardless of which tool wrote it."
-    },
-    {
-      "name": "feasibility-agent-env",
-      "source": "./feasibility-agent-env",
-      "description": "One-install environment bundle for the feasibility role: installs feasibility-cycle via dependency. Contains no code of its own."
+      "name": "feasibility",
+      "source": "./feasibility",
+      "description": "The feasibility role on contract v3: can it be built, may it be built \u2014 four probes (technical, prior_art, legal_regulatory, threat_model), each resolved with evidence before any verdict; spec read without the market argument; verdict go|no-go|conditional plus the measurement design. Ships skills: spike-report, stride-table, license-scan, build-vs-buy, reversibility-tag."
     }
   ]
 }
