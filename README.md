@@ -16,9 +16,7 @@ lead-engineer feasibility seat plus legal, regulatory, and threat-model
 risk. Given the spec deliberately WITHOUT the market argument
 (`market_argument_supplied: false`, recorded explicitly). Produces a
 constraint list, a `verdict: go|no-go|conditional`, and the measurement
-design. Which role a `verdict: go` wakes is canon at
-[on-the-record `docs/specs/wake-routing.md`](https://github.com/tokenmaxxxer/on-the-record/blob/main/docs/specs/wake-routing.md),
-not this rulebook.
+design. A `verdict: go` is what wakes coding.
 
 ## What is here
 
