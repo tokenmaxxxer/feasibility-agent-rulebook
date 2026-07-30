@@ -77,14 +77,11 @@ EXECUTION JUDGMENT (phase 2, quality bar):
   extend-vs-stop to the human — never silently continues.
 - Once at verdict, refuse to revise without a new probe finding.
 
-YOUR RECORD IS THE BOARD (do not skip this): WAKES-ON reads
-docs/issue-<n>/reports/feasibility.md ONLY — research files, surveys, and
-proposals wake no one. The record is execution-surface material, so:
-write it as your FIRST act of phase 2, and update its loop_state at
-every transition. Ending phase 2 without your record committed on the
-branch means the board never saw your work and no downstream role can
-ever be woken by it. (Measured: a phase-1-only issue left the board
-empty and machine wake-up dead.)
+RECORD REQUIREMENTS (do not skip this): the record lives at
+docs/issue-<n>/reports/feasibility.md and nowhere else — research files, surveys, and
+proposals are not the record. Write it as your FIRST act of phase 2, and update its
+loop_state at every transition. Ending phase 2 without your record committed on the
+branch means the required record was never delivered.
 
 DIRECTIVE
 
