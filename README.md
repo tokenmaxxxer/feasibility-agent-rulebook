@@ -22,9 +22,7 @@ a two-way prerequisite resolvable **within this repo's own work** ->
 `go` + the `verdict_provisional` convention in the record body (see
 "Record vocabulary"); a scope constraint only -> `go` + the constraint
 in the record body. The `verdict` field carries the bare enum value
-only — narrative lives in the record body. Which role a `verdict: go` wakes is canon at
-[on-the-record `docs/specs/wake-routing.md`](https://github.com/tokenmaxxxer/on-the-record/blob/main/docs/specs/wake-routing.md),
-not this rulebook.
+only — narrative lives in the record body.
 
 ## What is here
 
