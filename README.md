@@ -16,7 +16,13 @@ lead-engineer feasibility seat plus legal, regulatory, and threat-model
 risk. Given the spec deliberately WITHOUT the market argument
 (`market_argument_supplied: false`, recorded explicitly). Produces a
 constraint list, a `verdict: go|no-go|conditional`, and the measurement
-design. Which role a `verdict: go` wakes is canon at
+design. Selection criteria: a blocking condition resolvable only
+**externally** -> `conditional` (blocking condition in `conditions:`);
+a two-way prerequisite resolvable **within this repo's own work** ->
+`go` + the `verdict_provisional` convention in the record body (see
+"Record vocabulary"); a scope constraint only -> `go` + the constraint
+in the record body. The `verdict` field carries the bare enum value
+only — narrative lives in the record body. Which role a `verdict: go` wakes is canon at
 [on-the-record `docs/specs/wake-routing.md`](https://github.com/tokenmaxxxer/on-the-record/blob/main/docs/specs/wake-routing.md),
 not this rulebook.
 
@@ -50,6 +56,13 @@ scope-approved` when this is the front record). Probe fields `technical`
 / `prior_art` / `legal_regulatory` / `threat_model`, each `unresolved |
 pass:<evidence> | fail:<evidence> | blocked:<evidence>`. Spike reports
 live at `docs/issue-<n>/reports/spikes/<slug>.md` (a core R5 grant).
+
+`verdict_provisional` (underscore) is a **body-level convention**, not a
+`loop_state` value: on a `verdict: go` record, it names an in-repo,
+two-way-resolvable prerequisite in the record body (controller #89
+precedent). It is distinct from `verdict-provisional` (hyphenated)
+above, which is the phase-1-vs-human-accepted `loop_state` disposition.
+Same words, different concepts; both are kept.
 
 ## Install
 
