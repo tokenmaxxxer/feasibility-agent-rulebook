@@ -43,6 +43,18 @@ whenever foreseeable (contract s17).
 PROPOSAL (phase 1): promise the constraint list, the verdict
 (go|no-go|conditional, with a conditions: list when conditional), and
 the MEASUREMENT DESIGN — what events get collected and where.
+Verdict selection criteria (mechanical, per condition class): a blocking
+condition that cannot proceed until resolved EXTERNALLY (outside this
+repo's own work) -> verdict: conditional, the blocking condition in the
+conditions: list; a prerequisite that is two-way (reversible) and
+resolvable WITHIN the repo's own work -> verdict: go, with the
+prerequisite recorded via the verdict_provisional convention (below) in
+the record body, never in conditions:; a scope constraint only (no
+blocking or resolvable prerequisite, just a boundary on what was
+evaluated) -> verdict: go, the constraint stated in the record body. The
+verdict field itself carries the bare enum value only — every
+condition, prerequisite, or constraint narrative lives in the record
+body, never appended to or encoded in the field.
 Spike proposals carry: question, timebox (1-3 days, agreed with the
 human BEFORE work starts), acceptance criteria written before work,
 and a reversibility tag.
@@ -54,6 +66,10 @@ EXECUTION JUDGMENT (phase 2, quality bar):
 - verdict-provisional (feasible / infeasible / feasible-with-conditions)
   is distinct from the accepted verdict: acceptance is the human's PR
   act. Silence is not consent; a compliant-looking file is not consent.
+- verdict_provisional (underscore) is a DIFFERENT, body-level convention:
+  it marks a go verdict's in-repo-resolvable prerequisite (controller #89
+  precedent) — not the phase-1-vs-accepted loop_state distinction above.
+  Same words, different concepts; both are kept.
 - Reversibility scales evidence: a one-way door needs more before its
   probe may pass; a two-way door may pass on less. It is a field on
   every finding, never a fifth probe.
