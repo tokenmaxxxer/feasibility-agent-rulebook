@@ -1,0 +1,7 @@
+{
+  "name": "madr-options",
+  "description": "MADR's \"Candidates/Options considered\" discipline: plural candidates with a one-line rejection reason each, carried forward from phase-1 proposals into phase-2 records, with the timebox-before-candidates order constraint.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

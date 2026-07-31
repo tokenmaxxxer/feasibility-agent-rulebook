@@ -8,6 +8,21 @@
       "name": "feasibility",
       "source": "./feasibility",
       "description": "The feasibility role on contract v3: can it be built, may it be built \u2014 four probes (technical, prior_art, legal_regulatory, threat_model), each resolved with evidence before any verdict; spec read without the market argument; verdict go|no-go|conditional plus the measurement design. Ships skills: spike-report, stride-table, license-scan, build-vs-buy, reversibility-tag."
+    },
+    {
+      "name": "madr-options",
+      "source": "./madr-options",
+      "description": "MADR's candidates/options-considered discipline: plural candidates, one-line rejection reasons, carried forward from phase-1 proposals into phase-2 records. Self-contained \u2014 own SessionStart directive fragment and PreToolUse gate; not a standalone role."
+    },
+    {
+      "name": "nygard-adr-spine",
+      "source": "./nygard-adr-spine",
+      "description": "Nygard's minimal ADR spine (Title/Status/Context/Decision/Consequences) plus Risks disposition, as the phase-2 record base shape. Self-contained \u2014 own SessionStart directive fragment and PreToolUse gate; not a standalone role."
+    },
+    {
+      "name": "evidence-citation",
+      "source": "./evidence-citation",
+      "description": "OpenSSF-Scorecard-style mandatory evidence citation format (<claim> \u2014 <source>), no bare assertions, carried forward across phases. Self-contained \u2014 own SessionStart directive fragment and PreToolUse gate; not a standalone role."
     }
   ]
 }

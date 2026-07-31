@@ -1,0 +1,7 @@
+{
+  "name": "evidence-citation",
+  "description": "OpenSSF-Scorecard-style mandatory evidence citation format enforcement (<claim> — <source: URL | path:line | check-name score>), no bare assertions, carried forward across phases.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}

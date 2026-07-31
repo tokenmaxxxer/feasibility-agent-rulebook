@@ -1,0 +1,7 @@
+{
+  "name": "nygard-adr-spine",
+  "description": "Nygard's minimal ADR spine (Title/Status/Context/Decision/Consequences) plus a Risks-disposition field, enforced as the phase-2 record's base shape.",
+  "author": {
+    "name": "Jung Jiwon & Lee Jongkwan"
+  }
+}
