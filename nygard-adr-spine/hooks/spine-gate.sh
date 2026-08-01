@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
-trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit): Nygard's minimal ADR spine
 # (Title/Status/Context/Decision/Consequences) plus a Risks-disposition
 # field, checked on the phase-2 record's own write surface only.
@@ -11,7 +9,8 @@ trap __fc EXIT
 # Code fires every enabled plugin's hooks.json independently, so no edit
 # to any sibling plugin is required for this gate to run.
 #
-# Fail-closed: malformed/missing input, unresolvable root => DENY.
+# Fail-closed: malformed/missing input, unresolvable root, or an
+# unreconstructable Edit/MultiEdit => DENY.
 # Kill switch: NYGARD_ADR_SPINE_GATE_OFF=1 (1/true/yes/on disables).
 #
 # Heuristic limits (documented, not hidden): section detection is by
@@ -22,16 +21,19 @@ trap __fc EXIT
 # complete; conversely, a field name appearing in an unrelated context
 # (e.g. inside a code block) may be picked up as if it were the real
 # field. These are accepted trade-offs for a fast, dependency-free gate.
+#
+# Referenced (never copied) from core's gate-house standard (issue-72):
+# core/hooks/lib/gate-lib.sh / gate-lib.py, per docs/handbooks/
+# canon-scripts.md's reference-not-copy rule.
 
-set -euo pipefail
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" 2>/dev/null && pwd -P)}/hooks/lib/gate-lib.sh" \
+  || { echo "nygard-adr-spine: DENIED (spine-gate) — gate-lib.sh not found; set CLAUDE_PLUGIN_ROOT_CORE to core's plugin root" >&2; exit 2; }
+gate_trap_fail_closed
+set -uo pipefail
 
-case "${NYGARD_ADR_SPINE_GATE_OFF:-}" in
-  ""|0|false|no|off) ;;
-  1|true|yes|on) exit 0 ;;
-  *) ;;
-esac
+gate_kill_switch_active "${NYGARD_ADR_SPINE_GATE_OFF:-}" || { trap - EXIT; exit 0; }
 
-deny() { echo "nygard-adr-spine: DENIED (spine-gate) — $1" >&2; exit 2; }
+deny() { gate_deny "nygard-adr-spine (spine-gate)" "$1"; }
 command -v python3 >/dev/null 2>&1 || deny "python3 is required and was not found."
 
 payload="$(cat 2>/dev/null || true)"
@@ -40,8 +42,12 @@ payload="$(cat 2>/dev/null || true)"
 set +e
 NYGARD_PAYLOAD="$payload" NYGARD_CPD="${CLAUDE_PROJECT_DIR:-}" NYGARD_CWD="$(pwd -P)" \
   NYGARD_TERMINAL_STATES="${NYGARD_ADR_SPINE_TERMINAL_STATES:-verdict scope-approved}" \
-  python3 <<'PY'
-import json, os, posixpath, re, sys, subprocess
+  GATE_LIB_PY="$GATE_LIB_PY" python3 <<'PY'
+import importlib.util, json, os, posixpath, re, sys, subprocess
+
+_spec = importlib.util.spec_from_file_location("gate_lib", os.environ["GATE_LIB_PY"])
+gate_lib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gate_lib)
 
 def deny(m): print("nygard-adr-spine: DENIED (spine-gate) - %s" % m, file=sys.stderr); sys.exit(2)
 def allow(): sys.exit(0)
@@ -54,25 +60,16 @@ def _fc_hook(_t, _v, _tb):
     os._exit(2)
 sys.excepthook = _fc_hook
 
-try:
-    event = json.loads(os.environ.get("NYGARD_PAYLOAD", ""))
-except ValueError:
-    deny("tool-input payload is not valid JSON.")
-if not isinstance(event, dict):
-    deny("tool-input payload is not a JSON object.")
+event = gate_lib.gate_parse_json_or_deny(os.environ.get("NYGARD_PAYLOAD", ""), deny)
 
 tool = event.get("tool_name")
 ti = event.get("tool_input")
 if not isinstance(tool, str) or not tool:
     deny("tool_name missing from payload.")
-if tool not in ("Write", "Edit", "MultiEdit"):
+if tool not in ("Write", "Edit", "MultiEdit", "Bash"):
     allow()  # foreign tool: nothing to gate
 if not isinstance(ti, dict):
     deny("tool_input missing or malformed in payload.")
-
-path = ti.get("file_path")
-if not isinstance(path, str) or not path:
-    deny("write call carries no file_path.")
 
 def plausible_root(d):
     return bool(d) and os.path.isdir(d) and (os.path.exists(os.path.join(d, ".git"))
@@ -84,41 +81,67 @@ def git_top(d):
     except Exception:
         return None
 
-norm = path.replace("\\","/")
 cpd = os.environ.get("NYGARD_CPD","")
 cwd = os.environ.get("NYGARD_CWD","")
-root = None
-if plausible_root(cpd):
-    try:
-        cand = os.path.realpath(cpd)
-        absu = norm if posixpath.isabs(norm) else posixpath.join(cand,norm)
-        real = os.path.realpath(absu)
-        if real == cand or real.startswith(cand+"/"): root = cand
-    except Exception: root = None
-if root is None:
-    base = norm if posixpath.isabs(norm) else posixpath.join(cwd,norm)
-    d = base if os.path.isdir(base) else posixpath.dirname(base)
-    root = git_top(d) or git_top(cwd)
+
+def resolve_root(anchor_path):
+    root = None
+    if plausible_root(cpd):
+        root = os.path.realpath(cpd)
+    if root is None:
+        base = anchor_path.replace("\\","/")
+        base = base if posixpath.isabs(base) else posixpath.join(cwd, base)
+        d = base if os.path.isdir(base) else posixpath.dirname(base)
+        root = git_top(d) or git_top(cwd)
+    return root
+
+if tool == "Bash":
+    cmdline = ti.get("command")
+    if not isinstance(cmdline, str):
+        deny("Bash payload carries no command string.")
+    root = resolve_root(cwd)
+    if not root:
+        deny("no project root could be determined; refusing rather than silently allowing.")
+    for tok in re.findall(r"[\w./~$-]+", cmdline):
+        rel = gate_lib.gate_normalize_path(root, tok)
+        if rel and re.match(r"^docs/issue-[0-9]+/reports/technical-feasibility\.md$", rel):
+            deny("a Bash command appears to write to the spine-gate-owned "
+                 "record path (%s); this gate cannot verify content written "
+                 "outside Write/Edit/MultiEdit, so it refuses rather than "
+                 "silently allowing an unchecked write." % rel)
+    allow()
+
+path = ti.get("file_path")
+if not isinstance(path, str) or not path:
+    deny("write call carries no file_path.")
+
+root = resolve_root(path)
 if not root:
     deny("no project root could be determined; refusing rather than silently allowing.")
 
-absu = posixpath.normpath(norm if posixpath.isabs(norm) else posixpath.join(root,norm))
-resolved = posixpath.normpath(os.path.realpath(absu).replace("\\","/"))
-try:
-    rel = posixpath.relpath(resolved, root).replace("\\","/")
-except ValueError:
-    allow()
+rel = gate_lib.gate_normalize_path(root, path)
+if rel is None:
+    allow()  # resolves outside root; nothing to gate
 
 # Phase-2 only write surface.
 if not re.match(r"^docs/issue-[0-9]+/reports/technical-feasibility\.md$", rel):
     allow()  # foreign path: nothing to gate
 
-content = ti.get("content")
-if not isinstance(content, str):
-    # Edit/MultiEdit carry diff fragments, not the full record; this
-    # gate needs the complete content to judge the whole spine.
-    deny("no full-content field found on this write; the spine gate needs the complete "
-         "record content (as Write's 'content') to verify all six fields.")
+abs_path = os.path.join(root, rel)
+current_content = None
+if os.path.isfile(abs_path):
+    try:
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            current_content = f.read()
+    except Exception:
+        current_content = None
+
+content, ok = gate_lib.gate_reconstruct_write(tool, ti, current_content)
+if not ok:
+    deny("could not reconstruct the resulting content of this %s call "
+         "(missing content/old_string/new_string, or old_string not found "
+         "in the current on-disk record) — refusing rather than judging a "
+         "partial or guessed view of the spine." % tool)
 
 lower = content.lower()
 

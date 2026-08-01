@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-__fc(){ rc=$?; if [ "$rc" != 0 ] && [ "$rc" != 2 ]; then echo "fail-closed: gate aborted (rc=$rc)" >&2; exit 2; fi; }
-trap __fc EXIT
 # PreToolUse hook (Write|Edit|MultiEdit): MADR "Candidates/Options considered"
 # discipline (see ../directive-fragment.md).
 #
@@ -25,24 +23,34 @@ trap __fc EXIT
 #
 # Fail-closed: malformed/missing input, unresolvable root => DENY.
 # Kill switch: MADR_OPTIONS_GATE_OFF=1 (1/true/yes/on disables).
-set -euo pipefail
+#
+# Referenced (never copied) from core's gate-house standard (issue-72):
+# core/hooks/lib/gate-lib.sh / gate-lib.py, per docs/handbooks/
+# canon-scripts.md's reference-not-copy rule.
+
+. "${CLAUDE_PLUGIN_ROOT_CORE:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../core" 2>/dev/null && pwd -P)}/hooks/lib/gate-lib.sh" \
+  || { echo "madr-options: DENIED (options-gate) — gate-lib.sh not found; set CLAUDE_PLUGIN_ROOT_CORE to core's plugin root" >&2; exit 2; }
+gate_trap_fail_closed
+set -uo pipefail
 
 # Drain stdin unconditionally first, so an upstream pipe never sees SIGPIPE
 # from an early exit (e.g. the kill switch below) under `set -o pipefail`.
 payload="$(cat 2>/dev/null || true)"
 
-case "$(printf '%s' "${MADR_OPTIONS_GATE_OFF:-}" | tr '[:upper:]' '[:lower:]')" in
-  1|true|yes|on) exit 0 ;;
-esac
+gate_kill_switch_active "${MADR_OPTIONS_GATE_OFF:-}" || { trap - EXIT; exit 0; }
 
-deny() { echo "madr-options: DENIED (options-gate) — $1" >&2; exit 2; }
+deny() { gate_deny "madr-options (options-gate)" "$1"; }
 command -v python3 >/dev/null 2>&1 || deny "python3 is required and was not found."
 
 [ -n "$payload" ] || deny "no tool-input payload was received."
 
 set +e
-MADR_PAYLOAD="$payload" MADR_CPD="${CLAUDE_PROJECT_DIR:-}" MADR_CWD="$(pwd -P)" python3 <<'PY'
-import json, os, posixpath, re, sys, subprocess, glob
+MADR_PAYLOAD="$payload" MADR_CPD="${CLAUDE_PROJECT_DIR:-}" MADR_CWD="$(pwd -P)" GATE_LIB_PY="$GATE_LIB_PY" python3 <<'PY'
+import importlib.util, json, os, posixpath, re, sys, subprocess, glob
+
+_spec = importlib.util.spec_from_file_location("gate_lib", os.environ["GATE_LIB_PY"])
+gate_lib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gate_lib)
 
 def deny(m): print("madr-options: DENIED (options-gate) - %s" % m, file=sys.stderr); sys.exit(2)
 def allow(): sys.exit(0)
@@ -55,12 +63,7 @@ def _fc_hook(_t, _v, _tb):
     os._exit(2)
 sys.excepthook = _fc_hook
 
-try:
-    event = json.loads(os.environ.get("MADR_PAYLOAD", ""))
-except ValueError:
-    deny("tool-input payload is not valid JSON.")
-if not isinstance(event, dict):
-    deny("tool-input payload is not a JSON object.")
+event = gate_lib.gate_parse_json_or_deny(os.environ.get("MADR_PAYLOAD", ""), deny)
 
 tool = event.get("tool_name")
 ti = event.get("tool_input")
@@ -69,12 +72,8 @@ if not isinstance(tool, str) or not tool:
 if not isinstance(ti, dict):
     deny("tool_input missing or malformed in payload.")
 
-if tool not in ("Write", "Edit", "MultiEdit"):
+if tool not in ("Write", "Edit", "MultiEdit", "Bash"):
     allow()
-
-path = ti.get("file_path")
-if not isinstance(path, str) or not path:
-    allow()  # nothing to key off of; not this gate's concern
 
 def plausible_root(d):
     return bool(d) and os.path.isdir(d) and os.path.exists(os.path.join(d, ".git"))
@@ -85,32 +84,49 @@ def git_top(d):
     except Exception:
         return None
 
-norm = path.replace("\\","/")
 cpd = os.environ.get("MADR_CPD",""); cwd = os.environ.get("MADR_CWD","")
-root = None
-if plausible_root(cpd):
-    try:
-        cand = os.path.realpath(cpd)
-        absu = norm if posixpath.isabs(norm) else posixpath.join(cand,norm)
-        real = os.path.realpath(absu)
-        if real == cand or real.startswith(cand+"/"): root = cand
-    except Exception: root = None
-if root is None:
-    base = norm if posixpath.isabs(norm) else posixpath.join(cwd,norm)
-    d = base if os.path.isdir(base) else posixpath.dirname(base)
-    root = git_top(d) or git_top(cwd)
-if not root:
-    deny("no project root could be determined; refusing rather than silently allowing.")
 
-absu = posixpath.normpath(norm if posixpath.isabs(norm) else posixpath.join(root,norm))
-resolved = posixpath.normpath(os.path.realpath(absu).replace("\\","/"))
-try:
-    rel = posixpath.relpath(resolved, root).replace("\\","/")
-except ValueError:
-    allow()
+def resolve_root(anchor_path):
+    r = None
+    if plausible_root(cpd):
+        r = os.path.realpath(cpd)
+    if r is None:
+        base = anchor_path.replace("\\","/")
+        base = base if posixpath.isabs(base) else posixpath.join(cwd, base)
+        d = base if os.path.isdir(base) else posixpath.dirname(base)
+        r = git_top(d) or git_top(cwd)
+    return r
 
 PHASE1_RE = re.compile(r"^docs/issue-([0-9]+)/proposals/.*technical-feasibility.*\.md$")
 PHASE2_RE = re.compile(r"^docs/issue-([0-9]+)/reports/technical-feasibility\.md$")
+
+if tool == "Bash":
+    cmdline = ti.get("command")
+    if not isinstance(cmdline, str):
+        deny("Bash payload carries no command string.")
+    root = resolve_root(cwd)
+    if not root:
+        deny("no project root could be determined; refusing rather than silently allowing.")
+    for tok in re.findall(r"[\w./~$-]+", cmdline):
+        rel_tok = gate_lib.gate_normalize_path(root, tok)
+        if rel_tok and (PHASE1_RE.match(rel_tok) or PHASE2_RE.match(rel_tok)):
+            deny("a Bash command appears to write to a madr-options-owned "
+                 "path (%s); this gate cannot verify content written "
+                 "outside Write/Edit/MultiEdit, so it refuses rather than "
+                 "silently allowing an unchecked write." % rel_tok)
+    allow()
+
+path = ti.get("file_path")
+if not isinstance(path, str) or not path:
+    allow()  # nothing to key off of; not this gate's concern
+
+root = resolve_root(path)
+if not root:
+    deny("no project root could be determined; refusing rather than silently allowing.")
+
+rel = gate_lib.gate_normalize_path(root, path)
+if rel is None:
+    allow()  # resolves outside root; nothing to gate
 
 m1 = PHASE1_RE.match(rel)
 m2 = PHASE2_RE.match(rel)

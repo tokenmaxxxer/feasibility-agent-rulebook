@@ -8,6 +8,23 @@ machine-checked gates, each self-contained and independent of the
 - `nygard-adr-spine/` — Nygard's minimal ADR spine + Risks disposition.
 - `evidence-citation/` — mandatory evidence citation format.
 
+## gate-lib migration (issue-42)
+
+All three gates (`citation-gate.sh`, `spine-gate.sh`, `options-gate.sh`)
+source core's `core/hooks/lib/gate-lib.sh`/`gate-lib.py` (issue-72
+gate-house standard) for their fail-closed trap, kill-switch check, path
+normalization, and — for `citation-gate.sh`/`spine-gate.sh` —
+Edit/MultiEdit reconstruction (`gate_reconstruct_write`, honoring
+`replace_all`). `options-gate.sh` sources gate-lib for trap/kill-switch/
+path-normalize only; its Edit/MultiEdit posture (deny outright, needs the
+complete `Write` content to verify Candidates/Options sections) is
+unchanged by design — see docs/issue-42/reports/technical-feasibility.md
+"Risks". Resolved via `CLAUDE_PLUGIN_ROOT_CORE` (falls back to a sibling
+`../../core` checkout); when core isn't installed, the gates fail closed
+in production and their test scripts print `SKIP-ALL` rather than fail.
+`core/hooks/tests/compliance-check.sh <plugin>/hooks` is the ship-time
+detector for gate-lib compliance.
+
 ## Running the tests
 
 From the repo root:
