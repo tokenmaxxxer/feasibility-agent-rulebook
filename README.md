@@ -1,15 +1,15 @@
 # tokenmaxxxer / feasibility-agent-rulebook
 
-The `feasibility` role on contract v3. A feasibility session is spawned
-with two plugin sets installed: this marketplace's `feasibility` plugin,
-and the [tokenmaxxxer-core](https://github.com/tokenmaxxxer/tokenmaxxxer-core)
+The `technical-feasibility` role on contract v3. A technical-feasibility
+session is spawned with two plugin sets installed: this marketplace's
+`feasibility` plugin, and the [tokenmaxxxer-core](https://github.com/tokenmaxxxer/tokenmaxxxer-core)
 plugins (`core`, `terse`, `freelunch`, `scout`). Core owns the interaction
 protocol — issue in, two-phase PR out (research/survey/proposal → human
-review Approve → execution), branch `issue-<n>/feasibility`, record at
-`docs/issue-<n>/reports/feasibility.md`. This rulebook owns only what is
-feasibility-specific.
+review Approve → execution), branch `issue-<n>/technical-feasibility`,
+record at `docs/issue-<n>/reports/technical-feasibility.md`. This
+rulebook owns only what is technical-feasibility-specific.
 
-## What `feasibility` decides
+## What `technical-feasibility` decides
 
 Whether the specification CAN be built and MAY be built — the
 lead-engineer feasibility seat plus legal, regulatory, and threat-model
