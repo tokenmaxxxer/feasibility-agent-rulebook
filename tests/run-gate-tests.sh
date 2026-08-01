@@ -17,7 +17,7 @@ pass=0; fail=0; skip=0
 report() { if [ "$2" = "$1" ]; then pass=$((pass+1)); printf 'ok     %-34s %s\n' "$3" "$2"; else fail=$((fail+1)); printf 'FAIL   %-34s want=%s got=%s\n' "$3" "$1" "$2"; fi; }
 skipped() { skip=$((skip+1)); printf 'SKIP   %-34s %s\n' "$1" "$2"; }
 
-REC=docs/issue-7/reports/feasibility.md
+REC=docs/issue-7/reports/technical-feasibility.md
 run() { # want name gatedir gate file content
   local gate="$3/$4"
   if [ ! -f "$gate" ]; then skipped "$2" "gate not found at $gate (external dependency not checked out)"; return; fi
@@ -30,14 +30,16 @@ run() { # want name gatedir gate file content
 }
 
 GOOD='---
-status: verdict
+loop_state: landed
 ---
 ## What was done
 All four probes resolved.
 ## Why
 go; the no-go alternative was rejected on probe evidence.
 ## Upstream basis
-commit abc1234'
+commit abc1234
+## Open findings
+none'
 run allow record-complete "$CORE" record-fields-gate.sh "$REC" "$GOOD"
 run deny  record-empty    "$CORE" record-fields-gate.sh "$REC" "nothing"
 run deny  open-no-backlog "$CORE" record-fields-gate.sh "$REC" '---

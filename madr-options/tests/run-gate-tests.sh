@@ -147,5 +147,12 @@ bash_case() { # want name command
 bash_case deny bash-write-owned-target "echo x > $PROP"
 bash_case allow bash-write-foreign-target "echo hi > /tmp/scratch.txt"
 
+# --- missing-core: CLAUDE_PLUGIN_ROOT_CORE points nowhere -> guarded source must deny ---
+td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"
+printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":"x"},"cwd":"%s"}' "$PROP" "$td" \
+  | env CLAUDE_PLUGIN_ROOT_CORE="$td/no-such-core" CLAUDE_PROJECT_DIR="$td" /bin/bash "$HOOKS/options-gate.sh" >/dev/null 2>&1
+rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
+rm -rf "$td"; report deny "$got" missing-core
+
 printf '\n== %d passed, %d failed ==\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
