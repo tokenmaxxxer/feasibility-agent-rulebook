@@ -26,6 +26,11 @@ only — narrative lives in the record body.
 
 ## What is here
 
+This marketplace ships four plugins (`.claude-plugin/marketplace.json`).
+`record-fields-gate.sh`, `trailer-gate.sh`, and `handbook-trigger-gate.sh`
+are **core canon**, not vendored here — core fires them globally against
+every rulebook once installed (issue-31: core canon reference transition).
+
     feasibility/hooks/directive.sh      SessionStart — the four facets:
                                         research (the four probes, each with
                                         its evidence bar), survey (spec sans
@@ -36,15 +41,39 @@ only — narrative lives in the record body.
                                         verdict, provisional vs accepted,
                                         reversibility scales evidence,
                                         timebox expiry goes to the human)
-    feasibility/hooks/record-fields-gate.sh  s20 minimum content on the
-                                        record and on spike reports
-    feasibility/hooks/trailer-gate.sh   commits staging docs/issue-<n>/** carry
-                                        `Subject: issue-<n>`
-    feasibility/hooks/handbook-trigger-gate.sh  s21 same-turn handbook sync
     feasibility/skills/                 spike-report, stride-table,
                                         license-scan, build-vs-buy,
                                         reversibility-tag
+
+    madr-options/hooks/options-gate.sh       MADR "Candidates/Options
+                                        considered" discipline: plural
+                                        candidates, one-line rejection
+                                        reasons, phase-1 -> phase-2
+                                        carry-forward. Kill switch:
+                                        `MADR_OPTIONS_GATE_OFF=1`.
+    nygard-adr-spine/hooks/spine-gate.sh     Nygard's minimal ADR spine
+                                        (Title/Status/Context/Decision/
+                                        Consequences) plus Risks
+                                        disposition, on the phase-2 record.
+                                        Kill switch:
+                                        `NYGARD_ADR_SPINE_GATE_OFF=1`.
+    evidence-citation/hooks/citation-gate.sh OpenSSF-Scorecard-style
+                                        mandatory evidence citation format
+                                        (`<claim> — <source>`), no bare
+                                        assertions, carried forward across
+                                        phases. Kill switch:
+                                        `EVIDENCE_CITATION_GATE_OFF=1`.
+
     tests/                              repo-level checks (never installed)
+
+All three methodology gates (`citation-gate.sh`, `spine-gate.sh`,
+`options-gate.sh`) source core's `core/hooks/lib/gate-lib.sh`/
+`gate-lib.py` (issue-72 gate-house standard) for their fail-closed trap,
+kill-switch check, path normalization, and Edit/MultiEdit reconstruction
+— referenced, never reimplemented, resolved via
+`CLAUDE_PLUGIN_ROOT_CORE`. When core isn't installed/checked out
+alongside this repo, these gates fail closed (deny) rather than silently
+no-op.
 
 ## Record vocabulary
 
@@ -72,5 +101,14 @@ Kill switch: `FEASIBILITY_CYCLE_OFF=1`.
 ## Run the checks
 
     /bin/bash tests/parse-check.sh
-    /bin/bash tests/run-gate-tests.sh
+    /bin/bash tests/run-gate-tests.sh   # folds in each plugin's own tests/run-gate-tests.sh
     /bin/bash tests/deny-only-check.sh
+
+The methodology-gate test scripts (and the root harness that folds them
+in) require `core/hooks/lib/gate-lib.sh` to be resolvable — set
+`CLAUDE_PLUGIN_ROOT_CORE` to core's plugin root, or check core out as a
+sibling of this repo. Without it they print `SKIP-ALL` and exit 0 rather
+than fail, matching how the root harness already treats
+`record-fields-gate.sh`/`trailer-gate.sh` as an external dependency.
+Core's own `core/hooks/tests/compliance-check.sh <plugin>/hooks` is the
+ship-time detector for gate-lib compliance across all three gates.
