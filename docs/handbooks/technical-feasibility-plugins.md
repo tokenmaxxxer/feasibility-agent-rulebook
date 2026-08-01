@@ -36,6 +36,11 @@ bash tests/run-gate-tests.sh
 This runs the root harness (core-canon gate cases — `SKIP`s cleanly
 when `core` isn't checked out next to this repo, since it's referenced,
 not vendored) and folds in each plugin's own standalone test script.
+Its `run()` helper exports `CLAUDE_ROLE=technical-feasibility` alongside
+`CLAUDE_PROJECT_DIR` on the gate subprocess (issue-48 fix — core-canon
+`record-fields-gate.sh` denies unconditionally with no `CLAUDE_ROLE` set,
+so this must match the role literal `REC` already hardcodes at
+`tests/run-gate-tests.sh:20`).
 Each plugin's tests are also directly runnable on their own, e.g.:
 
 ```
