@@ -24,7 +24,7 @@ run() { # want name gatedir gate file content
   td="$(cd "$(mktemp -d)" && pwd -P)"; git init -q "$td"; mkdir -p "$td/docs/issue-7/reports"
   printf '{"tool_name":"Write","tool_input":{"file_path":"%s","content":%s},"cwd":"%s"}' \
     "$5" "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$6")" "$td" \
-    | env CLAUDE_PROJECT_DIR="$td" /bin/bash "$gate" >/dev/null 2>&1
+    | env CLAUDE_PROJECT_DIR="$td" CLAUDE_ROLE=technical-feasibility /bin/bash "$gate" >/dev/null 2>&1
   rc=$?; case "$rc" in 0) got=allow ;; 2) got=deny ;; *) got="exit-$rc" ;; esac
   rm -rf "$td"; report "$1" "$got" "$2"
 }
