@@ -1,5 +1,5 @@
 ---
-status: approved
+status: landed
 files:
   - README.md
   - feasibility-cycle/hooks/state-gate.sh
