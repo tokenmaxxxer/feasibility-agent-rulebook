@@ -1,6 +1,8 @@
-# Gates fail closed on internal error
+---
+status: landed
+---
 
-status: proposed
+# Gates fail closed on internal error
 
 ## Problem
 
