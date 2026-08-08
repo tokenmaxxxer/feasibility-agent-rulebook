@@ -1,5 +1,5 @@
 ---
-status: approved
+status: landed
 files:
   - feasibility-cycle/hooks/state-gate.sh
   - feasibility-cycle/hooks/transition-rules.md
